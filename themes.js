@@ -1,5 +1,6 @@
 // Thèmes disponibles. Les couleurs réelles sont dans styles.css ([data-theme="..."]).
 export const THEMES = [
+  { key: 'delice', label: 'Délice', brand: '#3f2b21', accent: '#14a3da', bg: '#f1eeea', surface: '#ffffff' },
   { key: 'foret', label: 'Forêt', brand: '#1f4a43', accent: '#d4a23f', bg: '#eef0ec', surface: '#ffffff' },
   { key: 'framboise', label: 'Framboise', brand: '#6e1f3c', accent: '#f2b5c4', bg: '#f5eef0', surface: '#ffffff' },
   { key: 'ocean', label: 'Océan', brand: '#183a5a', accent: '#49b3b8', bg: '#ebf0f4', surface: '#ffffff' },
@@ -9,7 +10,7 @@ export const THEMES = [
 const KEY = 'ltdd-theme'
 
 export function getTheme() {
-  try { return localStorage.getItem(KEY) || 'foret' } catch { return 'foret' }
+  try { return localStorage.getItem(KEY) || 'delice' } catch { return 'delice' }
 }
 
 export function applyTheme(key) {

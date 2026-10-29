@@ -15,6 +15,7 @@ import ProductStock from './ProductStock'
 import ShopStock from './ShopStock'
 import Allergens from './Allergens'
 import Users from './Users'
+import logo from './logo.png'
 
 // [clé, libellé, libellé court, icône, page, dans la barre du bas sur téléphone]
 const STAFF_TABS = [
@@ -104,7 +105,7 @@ export default function App() {
     <div className="app">
       <aside className="sidebar">
         <div className="brand">
-          <div className="brand-name">Le Temps<br />d’un Délice</div>
+          <img className="logo" src={logo} alt="Le Temps d’un Délice" />
           <div className="brand-sub">{place}</div>
         </div>
         <nav className="nav" aria-label="Navigation principale">
@@ -125,6 +126,7 @@ export default function App() {
       </aside>
 
       <header className="topbar">
+        <img className="logo" src={logo} alt="" />
         <div className="t-brand">Le Temps d’un Délice<small>{place}</small></div>
         <button className="icon" onClick={() => setThemeOpen(true)} aria-label="Changer de thème"><Icon name="palette" /></button>
       </header>

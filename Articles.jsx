@@ -3,15 +3,13 @@ import { supabase } from './supabase'
 import { q, useData } from './useData'
 import { eur, num, toNumber } from './format'
 import { ALLERGENS } from './allergenList'
-import { AllergenBadges } from './AllergenBadges'
-import { Empty, ErrorBox, Field, Loading, Modal, PageHeader, SearchBox, StockMoveModal } from './ui'
+import { Empty, ErrorBox, Field, Loading, Modal, NumberCell, PageHeader, QtyCell, SearchBox } from './ui'
 import { Icon } from './icons'
 import { notify } from './Toast'
 
 export default function Articles() {
   const data = useData(() => q(supabase.from('articles').select('*').order('category').order('name')), [])
   const [edit, setEdit] = useState(null)
-  const [move, setMove] = useState(null)
   const [search, setSearch] = useState('')
   const [lowOnly, setLowOnly] = useState(false)
 
@@ -25,13 +23,26 @@ export default function Articles() {
   const lowCount = (data.data || []).filter(a => Number(a.stock) < Number(a.min_stock)).length
   const value = (data.data || []).reduce((s, a) => s + Math.max(0, Number(a.stock)) * Number(a.price), 0)
 
+  async function adjust(a, delta) {
+    try {
+      const stock = await q(supabase.rpc('adjust_article_stock', { p_article: a.id, p_delta: delta }))
+      data.setData(rows => rows.map(r => (r.id === a.id ? { ...r, stock } : r)))
+    } catch (e) { notify(e.message, 'error') }
+  }
+  async function saveMin(a, v) {
+    try {
+      await q(supabase.from('articles').update({ min_stock: v }).eq('id', a.id))
+      data.setData(rows => rows.map(r => (r.id === a.id ? { ...r, min_stock: v } : r)))
+    } catch (e) { notify(e.message, 'error') }
+  }
+
   if (data.loading && !data.data) return <Loading />
   let lastCat = null
 
   return (
     <>
       <PageHeader title="Stock matières"
-        subtitle={`Inventaire des matières premières, indépendant des recettes. Valeur : ${eur(value)}${lowCount ? ` · ${lowCount} sous le minimum` : ''}.`}>
+        subtitle={`Matières premières, indépendantes des recettes. Tapez directement les quantités. Valeur : ${eur(value)}${lowCount ? ` · ${lowCount} sous le minimum` : ''}.`}>
         <button className="primary" onClick={() => setEdit({})}><Icon name="plus" size={20} />Nouvel article</button>
       </PageHeader>
       <ErrorBox error={data.error} />
@@ -40,38 +51,41 @@ export default function Articles() {
         <label className="check small-text"><input type="checkbox" checked={lowOnly} onChange={e => setLowOnly(e.target.checked)} />Seulement à racheter</label>
       </div>
       {!rows.length ? <Empty>{data.data?.length ? 'Aucun article ne correspond.' : 'Aucun article. Ajoutez vos matières premières : farine, beurre, œufs…'}</Empty> : (
-        <div className="list">
-          {rows.map(a => {
-            const out = []
-            if (a.category !== lastCat) { lastCat = a.category; out.push(<div key={'g' + a.id} className="list-group">{a.category || 'Sans catégorie'}</div>) }
-            const low = Number(a.stock) < Number(a.min_stock)
-            out.push(
-              <div key={a.id} className={'item stack-sm' + (Number(a.stock) <= 0 && Number(a.min_stock) > 0 ? ' out' : low ? ' low' : '')}>
-                <button className="item-main tap" onClick={() => setEdit(a)}>
-                  <span className="item-title">{a.name}</span>
-                  <span className="item-sub">{eur(a.price)}/{a.unit}{a.supplier ? ` · ${a.supplier}` : ''}{Number(a.min_stock) ? ` · min. ${num(a.min_stock, 3)}` : ''}</span>
-                  {a.allergens?.length > 0 && <AllergenBadges contains={a.allergens} compact />}
-                </button>
-                <div className="item-side">
-                  <span className="item-figure"><b className={low ? 'ko' : ''}>{num(a.stock, 3)}</b><span>{a.unit}</span></span>
-                  <button className="small" onClick={() => setMove(a)}>Mouvement</button>
-                </div>
-              </div>
-            )
-            return out
-          })}
+        <div className="table-wrap stock">
+          <table className="stock-table">
+            <thead>
+              <tr>
+                <th>Article</th>
+                <th className="c">En stock</th>
+                <th className="c">Minimum</th>
+                <th className="r hide-sm">Prix</th>
+                <th className="r">État</th>
+              </tr>
+            </thead>
+            <tbody>
+              {rows.flatMap(a => {
+                const out = []
+                if (a.category !== lastCat) { lastCat = a.category; out.push(<tr key={'g' + a.id} className="grp"><td colSpan={5}>{a.category || 'Sans catégorie'}</td></tr>) }
+                const stock = Number(a.stock), min = Number(a.min_stock)
+                const state = min > 0 && stock <= 0 ? 'out' : stock < min ? 'low' : ''
+                out.push(
+                  <tr key={a.id} className={state}>
+                    <td><button className="name" onClick={() => setEdit(a)}>{a.name}</button><span className="sub">{a.unit}{a.supplier ? ` · ${a.supplier}` : ''}</span></td>
+                    <td className="c"><QtyCell value={stock} label={a.name} onStep={d => adjust(a, d)} onSet={n => adjust(a, n - stock)} /></td>
+                    <td className="c"><NumberCell value={min} label={`Minimum ${a.name}`} onSave={v => saveMin(a, v)} /></td>
+                    <td className="r hide-sm">{eur(a.price)}/{a.unit}</td>
+                    <td className="r">{state ? <span className="state-ko">Racheter</span> : <span className="state-ok">✓</span>}</td>
+                  </tr>
+                )
+                return out
+              })}
+            </tbody>
+          </table>
         </div>
       )}
 
       {edit && <ArticleForm article={edit} onClose={() => setEdit(null)} onSaved={() => { setEdit(null); data.reload() }}
         categories={[...new Set((data.data || []).map(a => a.category).filter(Boolean))]} />}
-      {move && (
-        <StockMoveModal title={move.name} unit={move.unit} current={move.stock} onClose={() => setMove(null)}
-          onSubmit={async delta => {
-            try { await q(supabase.rpc('adjust_article_stock', { p_article: move.id, p_delta: delta })); notify('Stock mis à jour'); data.reload() }
-            catch (e) { notify(e.message, 'error'); throw e }
-          }} />
-      )}
     </>
   )
 }
@@ -127,7 +141,7 @@ function ArticleForm({ article, onClose, onSaved, categories }) {
         <div className="grid-2">
           {isNew
             ? <Field label={`Stock de départ (${f.unit})`}><input inputMode="decimal" value={f.stock} onChange={e => set({ stock: e.target.value })} /></Field>
-            : <Field label={`Stock actuel (${f.unit})`} hint="Modifiable via « Mouvement »"><input value={num(article.stock, 3)} disabled /></Field>}
+            : <Field label={`Stock actuel (${f.unit})`} hint="Modifiable directement dans le tableau"><input value={num(article.stock, 3)} disabled /></Field>}
           <Field label={`Stock minimum (${f.unit})`} hint="En dessous, l’article est signalé à racheter"><input inputMode="decimal" value={f.min_stock} onChange={e => set({ min_stock: e.target.value })} /></Field>
         </div>
         <div className="field">

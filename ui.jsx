@@ -148,3 +148,37 @@ export function ThemePicker({ value, onChange }) {
     </div>
   )
 }
+
+// Quantité modifiable dans un tableau : − / saisie directe / +
+const plain = v => String(Math.round(Number(v || 0) * 1000) / 1000)
+
+export function QtyCell({ value, label, onStep, onSet, step = 1 }) {
+  const [v, setV] = useState(plain(value))
+  useEffect(() => { setV(plain(value)) }, [value])
+  function commit() {
+    if (v.trim() === '') { setV(plain(value)); return }
+    const n = toNumber(v)
+    if (n !== Number(value)) onSet(n)
+    else setV(plain(value))
+  }
+  return (
+    <span className="qty-edit">
+      <button type="button" onClick={() => onStep(-step)} aria-label={`Retirer ${step} ${label}`}>−</button>
+      <input inputMode="decimal" value={v} onChange={e => setV(e.target.value)} onBlur={commit}
+        onFocus={e => e.target.select()} onKeyDown={e => e.key === 'Enter' && e.currentTarget.blur()} aria-label={`Quantité ${label}`} />
+      <button type="button" onClick={() => onStep(step)} aria-label={`Ajouter ${step} ${label}`}>+</button>
+    </span>
+  )
+}
+
+// Nombre modifiable (cible, minimum) : enregistre en quittant le champ
+export function NumberCell({ value, label, onSave }) {
+  const [v, setV] = useState(plain(value))
+  useEffect(() => { setV(plain(value)) }, [value])
+  return (
+    <input className="num-edit" inputMode="decimal" value={v} aria-label={label}
+      onChange={e => setV(e.target.value)} onFocus={e => e.target.select()}
+      onBlur={() => { const n = toNumber(v); if (n !== Number(value)) onSave(n); else setV(plain(value)) }}
+      onKeyDown={e => e.key === 'Enter' && e.currentTarget.blur()} />
+  )
+}

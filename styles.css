@@ -20,8 +20,17 @@
   color-scheme: light;
 }
 
-/* Forêt (défaut) */
-:root, [data-theme="foret"] {
+/* Délice (défaut, couleurs du logo) */
+:root, [data-theme="delice"] {
+  --bg: #f1eeea; --surface: #ffffff; --surface-2: #f8f6f3; --surface-3: #ebe5df;
+  --ink: #2a201b; --ink-soft: #66574e; --line: #e0d8d0; --line-strong: #c8bbb0;
+  --brand: #3f2b21; --brand-deep: #2f2018; --brand-soft: #57402f;
+  --on-brand: #ffffff; --on-brand-soft: #cdbbae;
+  --accent: #14a3da; --on-accent: #ffffff;
+  --primary: #3f2b21; --primary-hover: #2f2018; --on-primary: #ffffff;
+  --brand-text: #0b7fae;
+}
+[data-theme="foret"] {
   --bg: #eef0ec; --surface: #ffffff; --surface-2: #f5f7f3; --surface-3: #e7ebe5;
   --ink: #1e2a2d; --ink-soft: #56635f; --line: #d6dbd5; --line-strong: #b9c2bb;
   --brand: #1f4a43; --brand-deep: #163832; --brand-soft: #2b6158;
@@ -499,4 +508,57 @@ tr.clickable:hover td { background: var(--surface-2); }
   .app { display: block; }
   .main { padding: 0; }
   body { background: #fff; color: #000; }
+}
+
+/* =====================================================================
+   Tableaux de stock (lisibles sur ordinateur ET téléphone)
+   ===================================================================== */
+.stock-table { width: 100%; border-collapse: separate; border-spacing: 0; }
+.stock-table th, .stock-table td { padding: 8px 12px; border-bottom: 1px solid var(--line); vertical-align: middle; }
+.stock-table thead th { position: sticky; top: 0; z-index: 2; background: var(--surface-2); font-size: .82rem; color: var(--ink-soft); white-space: nowrap; }
+.stock-table th.c, .stock-table td.c { text-align: center; }
+.stock-table th.r, .stock-table td.r { text-align: right; }
+.stock-table tbody tr:hover td { background: var(--surface-2); }
+.stock-table tr.grp td { background: var(--surface-3); font-family: var(--font-title); font-weight: 650; color: var(--brand-text); padding: 6px 12px; font-size: .92rem; }
+.stock-table tr.low td:first-child { box-shadow: inset 4px 0 0 var(--warn); }
+.stock-table tr.out td:first-child { box-shadow: inset 4px 0 0 var(--red); }
+.stock-table tr.out td { background: color-mix(in srgb, var(--red-soft) 40%, var(--surface)); }
+.stock-table .name { font-weight: 700; cursor: pointer; background: none; border: 0; padding: 0; min-height: 0; color: var(--ink); text-align: left; white-space: normal; display: block; }
+.stock-table .name:hover { text-decoration: underline; text-underline-offset: 3px; }
+.stock-table .sub { display: block; font-size: .8rem; color: var(--ink-soft); font-weight: 400; margin-top: 2px; }
+.stock-table .allergens { margin-top: 4px; }
+.stock-table .big { font-family: var(--font-title); font-weight: 700; font-size: 1.1rem; font-variant-numeric: tabular-nums; }
+
+.qty-edit { display: inline-flex; align-items: stretch; border: 1px solid var(--line-strong); border-radius: var(--r-s); overflow: hidden; background: var(--surface); }
+.qty-edit button { border: 0; border-radius: 0; width: 40px; min-height: 42px; padding: 0; background: var(--surface-2); font-size: 1.3rem; font-weight: 600; }
+.qty-edit button:hover { background: var(--surface-3); }
+.qty-edit input {
+  width: 72px; min-height: 42px; border: 0; border-left: 1px solid var(--line); border-right: 1px solid var(--line); border-radius: 0;
+  text-align: center; padding: 0 4px; font-family: var(--font-title); font-weight: 700; font-size: 1.1rem; font-variant-numeric: tabular-nums;
+}
+.qty-edit input:focus { outline: none; background: color-mix(in srgb, var(--accent) 12%, var(--surface)); }
+.num-edit { width: 76px; min-height: 40px; text-align: center; padding: 0 6px; font-variant-numeric: tabular-nums; }
+.state-ok { color: var(--green); font-weight: 700; }
+.state-ko { color: var(--red); font-weight: 700; font-variant-numeric: tabular-nums; }
+.state-warn { color: var(--warn-ink); font-weight: 700; }
+.legend { display: flex; gap: 16px; flex-wrap: wrap; font-size: .85rem; color: var(--ink-soft); margin-top: 10px; }
+.legend i { display: inline-block; width: 4px; height: 14px; vertical-align: -2px; margin-right: 6px; border-radius: 2px; }
+
+/* Logo */
+.logo { display: block; height: auto; }
+.brand .logo { width: 150px; margin: 0 auto 6px; }
+.brand { text-align: center; }
+.topbar .logo { width: 46px; flex: none; }
+.login-side .logo { width: min(260px, 60%); margin-bottom: 18px; }
+
+@media (max-width: 860px) {
+  .table-wrap.stock { margin: 0 -14px; border-radius: 0; border-left: 0; border-right: 0; }
+  .stock-table th, .stock-table td { padding: 8px 6px; }
+  .stock-table th:first-child, .stock-table td:first-child { padding-left: 12px; }
+  .stock-table th:last-child, .stock-table td:last-child { padding-right: 12px; }
+  .stock-table .hide-sm { display: none; }
+  .qty-edit button { width: 34px; min-height: 44px; }
+  .qty-edit input { width: 54px; min-height: 44px; font-size: 1.05rem; }
+  .num-edit { width: 56px; padding: 0 4px; }
+  .login-side .logo { width: 170px; }
 }

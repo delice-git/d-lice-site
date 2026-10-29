@@ -4,7 +4,7 @@ import { q, useData } from './useData'
 import { loadCatalogue, allergensOf } from './catalogue'
 import { addDaysISO, fmtDateTime, num, todayISO, toNumber } from './format'
 import { AllergenBadges } from './AllergenBadges'
-import { Empty, ErrorBox, Field, Loading, Modal, PageHeader, SearchBox, Seg, Stepper, StockMoveModal } from './ui'
+import { Empty, ErrorBox, Field, Loading, Modal, NumberCell, PageHeader, QtyCell, SearchBox, Seg, StockMoveModal } from './ui'
 import { Icon } from './icons'
 import { notify } from './Toast'
 
@@ -23,7 +23,7 @@ const ITEM_REASONS = [
 ]
 const REASON_LABEL = {
   entree: 'Réception', fabrication: 'Fabrication maison', vente: 'Vente', perte: 'Perte',
-  inventaire: 'Inventaire', livraison: 'Livraison de la production', correction: 'Correction',
+  inventaire: 'Quantité corrigée', livraison: 'Livraison de la production', correction: 'Correction',
 }
 const UNITS = ['pièce', 'kg', 'L', 'boîte', 'paquet', 'bouteille', 'sac', 'rouleau']
 
@@ -38,10 +38,10 @@ export default function ShopStock({ profile, shops, isStaff }) {
   return (
     <>
       <PageHeader
-        title={isStaff ? (shopId === 'all' ? 'Stocks des magasins' : shopName) : 'Mon stock'}
+        title={shopId === 'all' ? 'Stocks des magasins' : isStaff ? `Stock — ${shopName}` : 'Mon stock'}
         subtitle={shopId === 'all'
-          ? 'Stock actuel et niveau cible de chaque magasin.'
-          : 'Notez vos réceptions, ventes, pertes et inventaires. Le stock se met à jour tout de suite.'}>
+          ? 'Stock actuel / niveau cible de chaque magasin, et stock de l’atelier.'
+          : 'Tapez directement la quantité, ou utilisez − (vente) et + (réception).'}>
         {isStaff && (
           <select value={shopId} onChange={e => setShopId(e.target.value)} aria-label="Magasin">
             <option value="all">Tous les magasins</option>
@@ -71,14 +71,20 @@ function OneShop({ shopId, cat }) {
   )
 }
 
-// ---------------- Produits (recettes de la production) ----------------
+function Legend() {
+  return (
+    <div className="legend">
+      <span><i style={{ background: 'var(--warn)' }} />Sous le niveau cible</span>
+      <span><i style={{ background: 'var(--red)' }} />Rupture</span>
+    </div>
+  )
+}
+
+// ---------------- Produits ----------------
 function Products({ shopId, cat }) {
   const [search, setSearch] = useState('')
-  const [inventory, setInventory] = useState(false)
-  const [counts, setCounts] = useState({})
   const [move, setMove] = useState(null)
   const [restockOpen, setRestockOpen] = useState(false)
-  const [saving, setSaving] = useState(false)
 
   const stock = useData(async () => {
     const [rows, orders] = await Promise.all([
@@ -97,39 +103,25 @@ function Products({ shopId, cat }) {
     return cat.recipes.filter(r => r.active && (!s || r.name.toLowerCase().includes(s))).map(r => {
       const row = stock.data.rows[r.id]
       const qty = Number(row?.qty || 0), target = Number(row?.target_qty || 0), pending = stock.data.pending[r.id] || 0
-      return { r, qty, target, pending, toOrder: Math.max(0, Math.ceil(target - qty - pending)), alg: allergensOf(r, cat) }
+      return { r, qty, target, pending, missing: Math.max(0, target - qty), toOrder: Math.max(0, Math.ceil(target - qty - pending)), alg: allergensOf(r, cat) }
     })
   }, [stock.data, cat, search])
-
   const below = lines.filter(l => l.toOrder > 0)
 
   function setLocal(recipeId, patch) {
     stock.setData(d => ({ ...d, rows: { ...d.rows, [recipeId]: { ...(d.rows[recipeId] || { qty: 0, target_qty: 0 }), ...patch } } }))
   }
-
   async function adjust(recipeId, delta, reason) {
     try {
       const qty = await q(supabase.rpc('adjust_shop_stock', { p_shop: shopId, p_recipe: recipeId, p_delta: delta, p_reason: reason }))
       setLocal(recipeId, { qty })
     } catch (e) { notify(e.message, 'error'); throw e }
   }
-
   async function saveTarget(recipeId, value) {
     try {
       await q(supabase.from('shop_stock').upsert({ shop_id: shopId, recipe_id: recipeId, target_qty: value }, { onConflict: 'shop_id,recipe_id' }))
       setLocal(recipeId, { target_qty: value })
-      notify('Niveau cible enregistré')
     } catch (e) { notify(e.message, 'error') }
-  }
-
-  const changed = lines.filter(l => counts[l.r.id] !== undefined && counts[l.r.id] !== '' && toNumber(counts[l.r.id]) !== l.qty)
-  async function saveInventory() {
-    setSaving(true)
-    try {
-      for (const l of changed) await adjust(l.r.id, toNumber(counts[l.r.id]) - l.qty, 'inventaire')
-      notify(`Inventaire enregistré (${changed.length} produit${changed.length > 1 ? 's' : ''})`)
-      setCounts({}); setInventory(false)
-    } catch { /* message déjà affiché */ } finally { setSaving(false) }
   }
 
   if (stock.loading && !stock.data) return <Loading />
@@ -138,92 +130,58 @@ function Products({ shopId, cat }) {
   return (
     <>
       <ErrorBox error={stock.error} />
-      {below.length > 0 && !inventory && (
-        <div className="panel row" style={{ marginBottom: 14 }}>
-          <div style={{ flex: 1, minWidth: 200 }}>
-            <h3>{below.length} produit{below.length > 1 ? 's' : ''} sous le niveau cible</h3>
-            <p className="muted small-text">Vous pouvez demander le complément à la production, ou fabriquer vous-même.</p>
-          </div>
-          <button className="accent" onClick={() => setRestockOpen(true)}>Commander ce qui manque</button>
-        </div>
-      )}
-
       <div className="toolbar">
         <SearchBox value={search} onChange={setSearch} placeholder="Rechercher un produit…" />
-        <button className={inventory ? 'primary' : ''} onClick={() => { setInventory(!inventory); setCounts({}) }}>
-          <Icon name="clipboard" size={20} />{inventory ? 'Quitter l’inventaire' : 'Faire l’inventaire'}
-        </button>
+        {below.length > 0 && <button className="accent" onClick={() => setRestockOpen(true)}>Commander ce qui manque ({below.length})</button>}
       </div>
-      {inventory && <div className="info-box" style={{ marginBottom: 14 }}>Comptez chaque produit et saisissez la quantité réelle. Laissez vide ce qui n’a pas changé.</div>}
 
-      {!lines.length ? <Empty>Aucun produit. La production doit d’abord créer des recettes.</Empty> : (
-        <div className="list">
-          {lines.map(l => {
-            const out = []
-            if (l.r.category !== lastCat) { lastCat = l.r.category; out.push(<div key={'g' + l.r.id} className="list-group">{l.r.category || 'Sans catégorie'}</div>) }
-            const state = l.target > 0 && l.qty <= 0 ? ' out' : l.qty < l.target ? ' low' : ''
-            out.push(
-              <div key={l.r.id} className={'item stack-sm' + state}>
-                <button className="item-main tap" onClick={() => setMove(l)}>
-                  <span className="item-title">{l.r.name}</span>
-                  <span className="item-sub">
-                    Cible {num(l.target)}{l.pending ? ` · ${num(l.pending)} en commande` : ''}{l.toOrder ? <b className="ko"> · manque {num(l.toOrder)}</b> : ''}
-                  </span>
-                  <AllergenBadges {...l.alg} compact />
-                </button>
-                <div className="item-side">
-                  {inventory ? (
-                    <label className="row" style={{ gap: 8, flexWrap: 'nowrap' }}>
-                      <span className="muted small-text">Avant : {num(l.qty)}</span>
-                      <input className="qty" inputMode="decimal" placeholder={String(l.qty)} value={counts[l.r.id] ?? ''}
-                        onChange={e => setCounts(c => ({ ...c, [l.r.id]: e.target.value }))} aria-label={`Quantité comptée ${l.r.name}`} />
-                    </label>
-                  ) : (
-                    <Stepper value={l.qty} label={l.r.name}
-                      onMinus={() => adjust(l.r.id, -1, 'vente').catch(() => {})}
-                      onPlus={() => adjust(l.r.id, 1, 'entree').catch(() => {})}
-                      onOpen={() => setMove(l)} />
-                  )}
-                </div>
-              </div>
-            )
-            return out
-          })}
+      {!lines.length ? <Empty>Aucun produit. La production doit d’abord en créer.</Empty> : (
+        <div className="table-wrap stock">
+          <table className="stock-table">
+            <thead>
+              <tr>
+                <th>Produit</th>
+                <th className="c">En stock</th>
+                <th className="c">Cible</th>
+                <th className="r">Manque</th>
+                <th className="r hide-sm">En commande</th>
+              </tr>
+            </thead>
+            <tbody>
+              {lines.flatMap(l => {
+                const out = []
+                if (l.r.category !== lastCat) { lastCat = l.r.category; out.push(<tr key={'g' + l.r.id} className="grp"><td colSpan={5}>{l.r.category || 'Sans catégorie'}</td></tr>) }
+                const state = l.target > 0 && l.qty <= 0 ? 'out' : l.qty < l.target ? 'low' : ''
+                out.push(
+                  <tr key={l.r.id} className={state}>
+                    <td>
+                      <button className="name" onClick={() => setMove(l)}>{l.r.name}</button>
+                      <span className="hide-sm"><AllergenBadges {...l.alg} compact /></span>
+                    </td>
+                    <td className="c">
+                      <QtyCell value={l.qty} label={l.r.name}
+                        onStep={d => adjust(l.r.id, d, d < 0 ? 'vente' : 'entree').catch(() => {})}
+                        onSet={n => adjust(l.r.id, n - l.qty, 'inventaire').catch(() => {})} />
+                    </td>
+                    <td className="c"><NumberCell value={l.target} label={`Niveau cible ${l.r.name}`} onSave={v => saveTarget(l.r.id, v)} /></td>
+                    <td className="r">{l.missing > 0 ? <span className="state-ko">{num(l.missing)}</span> : <span className="state-ok">✓</span>}</td>
+                    <td className="r hide-sm">{l.pending ? num(l.pending) : '—'}</td>
+                  </tr>
+                )
+                return out
+              })}
+            </tbody>
+          </table>
         </div>
       )}
-      {!inventory && <p className="muted small-text" style={{ marginTop: 10 }}>− compte une vente, + une réception. Touchez un produit ou le chiffre pour les autres mouvements.</p>}
-
-      {inventory && (
-        <div className="action-bar">
-          <span>{changed.length ? `${changed.length} produit${changed.length > 1 ? 's' : ''} modifié${changed.length > 1 ? 's' : ''}` : 'Aucune modification'}</span>
-          <span className="spacer" />
-          <button onClick={() => { setInventory(false); setCounts({}) }}>Annuler</button>
-          <button className="accent" disabled={!changed.length || saving} onClick={saveInventory}>{saving ? 'Enregistrement…' : 'Enregistrer l’inventaire'}</button>
-        </div>
-      )}
+      <Legend />
 
       {move && (
         <StockMoveModal title={move.r.name} unit="pièces" current={move.qty} reasons={PRODUCT_REASONS}
-          onClose={() => setMove(null)} onSubmit={(delta, reason) => adjust(move.r.id, delta, reason).then(() => notify('Stock mis à jour'))}>
-          <TargetEditor initial={move.target} onSave={v => saveTarget(move.r.id, v)} />
-        </StockMoveModal>
+          onClose={() => setMove(null)} onSubmit={(delta, reason) => adjust(move.r.id, delta, reason).then(() => notify('Stock mis à jour'))} />
       )}
       {restockOpen && <RestockSheet shopId={shopId} below={below} onClose={() => setRestockOpen(false)} onDone={() => { setRestockOpen(false); stock.reload() }} />}
     </>
-  )
-}
-
-function TargetEditor({ initial, onSave }) {
-  const [v, setV] = useState(String(initial))
-  return (
-    <div className="panel" style={{ background: 'var(--surface-2)', marginTop: 4 }}>
-      <Field label="Niveau cible" hint="Quantité à avoir en rayon. Sert à calculer ce qu’il manque.">
-        <div className="row" style={{ flexWrap: 'nowrap' }}>
-          <input inputMode="decimal" value={v} onChange={e => setV(e.target.value)} />
-          <button type="button" onClick={() => onSave(toNumber(v))} disabled={toNumber(v) === Number(initial)}>Enregistrer</button>
-        </div>
-      </Field>
-    </div>
   )
 }
 
@@ -240,13 +198,11 @@ function RestockSheet({ shopId, below, onClose, onDone }) {
   return (
     <Modal title="Commander ce qui manque" onClose={onClose}>
       <div className="stack">
-        <div className="list">
-          {below.map(l => (
-            <div key={l.r.id} className="item" style={{ minHeight: 0 }}>
-              <span className="item-main"><span className="item-title">{l.r.name}</span></span>
-              <b className="tabular">× {num(l.toOrder)}</b>
-            </div>
-          ))}
+        <div className="table-wrap">
+          <table className="stock-table">
+            <thead><tr><th>Produit</th><th className="r">Quantité</th></tr></thead>
+            <tbody>{below.map(l => <tr key={l.r.id}><td>{l.r.name}</td><td className="r big">{num(l.toOrder)}</td></tr>)}</tbody>
+          </table>
         </div>
         <Field label="Livraison souhaitée le"><input type="date" value={due} min={todayISO()} onChange={e => setDue(e.target.value)} /></Field>
         <div className="row end">
@@ -263,13 +219,18 @@ function Items({ shopId }) {
   const data = useData(() => q(supabase.from('shop_items').select('*').eq('shop_id', shopId).order('category').order('name')), [shopId])
   const [search, setSearch] = useState('')
   const [edit, setEdit] = useState(null)
-  const [move, setMove] = useState(null)
 
   async function adjust(item, delta, reason) {
     try {
       const qty = await q(supabase.rpc('adjust_shop_item', { p_item: item.id, p_delta: delta, p_reason: reason }))
       data.setData(rows => rows.map(r => (r.id === item.id ? { ...r, qty } : r)))
-    } catch (e) { notify(e.message, 'error'); throw e }
+    } catch (e) { notify(e.message, 'error') }
+  }
+  async function saveMin(item, v) {
+    try {
+      await q(supabase.from('shop_items').update({ min_qty: v }).eq('id', item.id))
+      data.setData(rows => rows.map(r => (r.id === item.id ? { ...r, min_qty: v } : r)))
+    } catch (e) { notify(e.message, 'error') }
   }
 
   if (data.loading && !data.data) return <Loading />
@@ -287,37 +248,35 @@ function Items({ shopId }) {
       {!rows.length ? (
         <Empty>{data.data?.length ? 'Aucun article ne correspond.' : 'Ajoutez ici ce que le magasin gère seul : boissons, emballages, produits revendus…'}</Empty>
       ) : (
-        <div className="list">
-          {rows.map(i => {
-            const out = []
-            if (i.category !== lastCat) { lastCat = i.category; out.push(<div key={'g' + i.id} className="list-group">{i.category || 'Sans catégorie'}</div>) }
-            const state = Number(i.min_qty) > 0 && Number(i.qty) <= 0 ? ' out' : Number(i.qty) < Number(i.min_qty) ? ' low' : ''
-            out.push(
-              <div key={i.id} className={'item stack-sm' + state}>
-                <button className="item-main tap" onClick={() => setMove(i)}>
-                  <span className="item-title">{i.name}</span>
-                  <span className="item-sub">{i.unit}{Number(i.min_qty) ? ` · minimum ${num(i.min_qty)}` : ''}{state ? <b className="ko"> · à racheter</b> : ''}</span>
-                </button>
-                <div className="item-side">
-                  <Stepper value={i.qty} label={i.name}
-                    onMinus={() => adjust(i, -1, 'vente').catch(() => {})}
-                    onPlus={() => adjust(i, 1, 'entree').catch(() => {})}
-                    onOpen={() => setMove(i)} />
-                </div>
-              </div>
-            )
-            return out
-          })}
+        <div className="table-wrap stock">
+          <table className="stock-table">
+            <thead><tr><th>Article</th><th className="c">En stock</th><th className="c">Minimum</th><th className="r">État</th></tr></thead>
+            <tbody>
+              {rows.flatMap(i => {
+                const out = []
+                if (i.category !== lastCat) { lastCat = i.category; out.push(<tr key={'g' + i.id} className="grp"><td colSpan={4}>{i.category || 'Sans catégorie'}</td></tr>) }
+                const qty = Number(i.qty), min = Number(i.min_qty)
+                const state = min > 0 && qty <= 0 ? 'out' : qty < min ? 'low' : ''
+                out.push(
+                  <tr key={i.id} className={state}>
+                    <td><button className="name" onClick={() => setEdit(i)}>{i.name}</button><span className="sub">{i.unit}</span></td>
+                    <td className="c">
+                      <QtyCell value={qty} label={i.name}
+                        onStep={d => adjust(i, d, d < 0 ? 'vente' : 'entree')}
+                        onSet={n => adjust(i, n - qty, 'inventaire')} />
+                    </td>
+                    <td className="c"><NumberCell value={min} label={`Minimum ${i.name}`} onSave={v => saveMin(i, v)} /></td>
+                    <td className="r">{state ? <span className="state-ko">Racheter</span> : <span className="state-ok">✓</span>}</td>
+                  </tr>
+                )
+                return out
+              })}
+            </tbody>
+          </table>
         </div>
       )}
       {edit && <ItemForm shopId={shopId} item={edit} categories={[...new Set((data.data || []).map(i => i.category).filter(Boolean))]}
-        onClose={() => setEdit(null)} onSaved={() => { setEdit(null); data.reload() }} />}
-      {move && (
-        <StockMoveModal title={move.name} unit={move.unit} current={move.qty} reasons={ITEM_REASONS}
-          onClose={() => setMove(null)} onSubmit={(delta, reason) => adjust(move, delta, reason).then(() => notify('Stock mis à jour'))}>
-          <button type="button" className="ghost" onClick={() => { setEdit(move); setMove(null) }}>Modifier ou supprimer l’article</button>
-        </StockMoveModal>
-      )}
+        onClose={() => setEdit(null)} onSaved={() => { setEdit(null); data.reload() }} onMove={edit.id ? (d, r) => adjust(edit, d, r) : null} />}
     </>
   )
 }
@@ -377,61 +336,84 @@ function ItemForm({ shopId, item, categories, onClose, onSaved }) {
 
 // ---------------- Historique ----------------
 function History({ shopId }) {
-  const data = useData(() => q(supabase.from('shop_moves').select('*').eq('shop_id', shopId).order('created_at', { ascending: false }).limit(100)), [shopId])
+  const data = useData(() => q(supabase.from('shop_moves').select('*').eq('shop_id', shopId).order('created_at', { ascending: false }).limit(150)), [shopId])
   if (data.loading && !data.data) return <Loading />
   if (!data.data?.length) return <><ErrorBox error={data.error} /><Empty>Aucun mouvement pour l’instant.</Empty></>
   return (
-    <div className="list">
-      {data.data.map(m => (
-        <div key={m.id} className="item">
-          <span className="item-main">
-            <span className="item-title">{m.label}</span>
-            <span className="item-sub">{REASON_LABEL[m.reason] || m.reason} · {fmtDateTime(m.created_at)}</span>
-          </span>
-          <span className="item-figure">
-            <b className={Number(m.delta) < 0 ? 'ko' : 'ok'}>{Number(m.delta) > 0 ? '+' : ''}{num(m.delta, 3)}</b>
-            {m.qty_after !== null && <span>reste {num(m.qty_after, 3)}</span>}
-          </span>
-        </div>
-      ))}
+    <div className="table-wrap stock">
+      <table className="stock-table">
+        <thead><tr><th>Date</th><th>Produit / article</th><th className="hide-sm">Mouvement</th><th className="r">Quantité</th><th className="r">Reste</th></tr></thead>
+        <tbody>
+          {data.data.map(m => (
+            <tr key={m.id}>
+              <td style={{ whiteSpace: 'nowrap' }}>{fmtDateTime(m.created_at)}</td>
+              <td><b>{m.label}</b><span className="sub only-mobile">{REASON_LABEL[m.reason] || m.reason}</span></td>
+              <td className="hide-sm">{REASON_LABEL[m.reason] || m.reason}</td>
+              <td className={'r ' + (Number(m.delta) < 0 ? 'state-ko' : 'state-ok')}>{Number(m.delta) > 0 ? '+' : ''}{num(m.delta, 3)}</td>
+              <td className="r">{m.qty_after !== null ? num(m.qty_after, 3) : '—'}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
     </div>
   )
 }
 
 // ---------------- Vue production : tous les magasins ----------------
 function Overview({ shops, cat, onPick }) {
-  const data = useData(() => q(supabase.from('shop_stock').select('*')), [])
+  const data = useData(async () => {
+    const [shop, prod] = await Promise.all([q(supabase.from('shop_stock').select('*')), q(supabase.from('production_stock').select('*'))])
+    return { shop, prod: Object.fromEntries(prod.map(p => [p.recipe_id, Number(p.qty)])) }
+  }, [])
   if (data.loading && !data.data) return <Loading />
   const map = {}
-  for (const r of data.data || []) map[r.shop_id + ':' + r.recipe_id] = r
+  for (const r of data.data?.shop || []) map[r.shop_id + ':' + r.recipe_id] = r
   const recipes = cat.recipes.filter(r => r.active)
+  let lastCat = null
   return (
     <>
       <ErrorBox error={data.error} />
       <div className="row" style={{ marginBottom: 14 }}>
         {shops.map(s => <button key={s.id} onClick={() => onPick(s.id)}><Icon name="store" size={20} />Gérer {s.name}</button>)}
       </div>
-      {!recipes.length ? <Empty>Aucune recette active.</Empty> : (
-        <div className="list">
-          {recipes.map(r => (
-            <div key={r.id} className="item stack-sm">
-              <span className="item-main"><span className="item-title">{r.name}</span><span className="item-sub">{r.category}</span></span>
-              <span className="item-side" style={{ gap: 18 }}>
-                {shops.map(s => {
-                  const row = map[s.id + ':' + r.id]
-                  const qty = Number(row?.qty || 0), target = Number(row?.target_qty || 0)
-                  return (
-                    <span key={s.id} className="item-figure">
-                      <b className={target && qty <= 0 ? 'ko' : ''}>{num(qty)}<small className="muted" style={{ fontSize: '.8rem', fontWeight: 400 }}> / {num(target)}</small></b>
-                      <span>{s.name}</span>
-                    </span>
-                  )
-                })}
-              </span>
-            </div>
-          ))}
+      {!recipes.length ? <Empty>Aucun produit actif.</Empty> : (
+        <div className="table-wrap stock">
+          <table className="stock-table">
+            <thead>
+              <tr>
+                <th>Produit</th>
+                {shops.map(s => <th key={s.id} className="c">{s.name}</th>)}
+                <th className="c">Atelier</th>
+              </tr>
+            </thead>
+            <tbody>
+              {recipes.flatMap(r => {
+                const out = []
+                if (r.category !== lastCat) { lastCat = r.category; out.push(<tr key={'g' + r.id} className="grp"><td colSpan={shops.length + 2}>{r.category || 'Sans catégorie'}</td></tr>) }
+                out.push(
+                  <tr key={r.id}>
+                    <td><b>{r.name}</b></td>
+                    {shops.map(s => {
+                      const row = map[s.id + ':' + r.id]
+                      const qty = Number(row?.qty || 0), target = Number(row?.target_qty || 0)
+                      const cls = target && qty <= 0 ? 'state-ko' : qty < target ? 'state-warn' : ''
+                      return (
+                        <td key={s.id} className="c">
+                          <span className={'big ' + cls}>{num(qty)}</span>
+                          <span className="muted small-text"> / {num(target)}</span>
+                        </td>
+                      )
+                    })}
+                    <td className="c"><span className="big">{num(data.data.prod[r.id] || 0)}</span></td>
+                  </tr>
+                )
+                return out
+              })}
+            </tbody>
+          </table>
         </div>
       )}
+      <p className="muted small-text" style={{ marginTop: 10 }}>En stock / niveau cible. Orange : sous la cible, rouge : rupture.</p>
     </>
   )
 }

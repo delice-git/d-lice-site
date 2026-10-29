@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { supabase } from './supabase'
 import { Field } from './ui'
+import logo from './logo.png'
 
 export default function Login() {
   const [email, setEmail] = useState('')
@@ -19,7 +20,7 @@ export default function Login() {
   return (
     <div className="login-wrap">
       <div className="login-side">
-        <div className="brand-name">Le Temps<br />d'un Délice</div>
+        <img className="logo" src={logo} alt="Le Temps d’un Délice" />
         <p>Stocks des magasins, commandes à la production, recettes et allergènes — au même endroit.</p>
       </div>
       <div className="login-form">
