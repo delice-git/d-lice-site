@@ -2,10 +2,11 @@ import { useMemo, useState } from 'react'
 import { supabase } from './supabase'
 import { q, useData } from './useData'
 import { loadCatalogue, allergensFromLines, lineCost, recipeCost } from './catalogue'
-import { eur, num, subUnit, toNumber, unitFactor } from './format'
+import { eur, num, subUnit, toNumber } from './format'
 import { ALLERGENS } from './allergenList'
 import { AllergenBadges } from './AllergenBadges'
-import { Empty, ErrorBox, Field, Loading, PageHeader } from './ui'
+import { Empty, ErrorBox, Field, Loading, Modal, PageHeader, SearchBox } from './ui'
+import { Icon } from './icons'
 import { notify } from './Toast'
 
 const CATEGORIES = ['Pain', 'Viennoiserie', 'Pâtisserie', 'Snacking', 'Gâteau', 'Autre']
@@ -24,80 +25,84 @@ export default function Recipes() {
 
   if (cat.loading && !cat.data) return <Loading />
   const recipe = selected && selected !== 'new' ? cat.data?.recipes.find(r => r.id === selected) : null
+  const open = id => { setSelected(id); window.scrollTo(0, 0) }
 
   return (
     <>
-      <PageHeader title="Recettes" subtitle="Le coût, la marge et les allergènes se calculent à partir des articles du stock matières.">
-        <button className="primary" onClick={() => setSelected('new')}>Nouvelle recette</button>
-      </PageHeader>
+      <div className={selected ? 'only-desktop' : ''}>
+        <PageHeader title="Recettes" subtitle="Fiches techniques : ingrédients, coût, marge et allergènes. Indépendantes du stock.">
+          <button className="primary" onClick={() => open('new')}><Icon name="plus" size={20} />Nouvelle recette</button>
+        </PageHeader>
+      </div>
       <ErrorBox error={cat.error} />
-      <div className="split">
-        <div className="recipe-list">
-          <div className="search">
-            <input placeholder="Rechercher…" value={search} onChange={e => setSearch(e.target.value)} aria-label="Rechercher une recette" />
-            <label className="row small-text" style={{ gap: 8 }}>
-              <input type="checkbox" checked={archived} onChange={e => setArchived(e.target.checked)} /> Voir les recettes archivées
-            </label>
+      <div className={'split' + (selected ? ' has-sel' : '')}>
+        <div className="list recipe-list">
+          <div className="list-head">
+            <SearchBox value={search} onChange={setSearch} placeholder="Rechercher une recette…" />
+            <label className="check small-text"><input type="checkbox" checked={archived} onChange={e => setArchived(e.target.checked)} />Voir les recettes archivées</label>
           </div>
-          <ul>
+          <div className="scroll">
             {list.map(r => (
-              <li key={r.id}>
-                <button className={selected === r.id ? 'active' : ''} onClick={() => setSelected(r.id)}>
-                  <span>{r.name}<br /><small>{r.category || 'Sans catégorie'}</small></span>
-                  <small className="tabular">{eur(recipeCost(r, cat.data) / Number(r.yield_qty))}/pc</small>
-                </button>
-              </li>
+              <button key={r.id} className={'item' + (selected === r.id ? ' active' : '')} onClick={() => open(r.id)}>
+                <span className="item-main">
+                  <span className="item-title">{r.name}</span>
+                  <span className="item-sub">{r.category || 'Sans catégorie'}</span>
+                </span>
+                <span className="item-figure"><b style={{ fontSize: '1rem' }}>{eur(recipeCost(r, cat.data) / Number(r.yield_qty))}</b><span>par pièce</span></span>
+              </button>
             ))}
-            {!list.length && <li className="muted" style={{ padding: 16 }}>Aucune recette.</li>}
-          </ul>
+            {!list.length && <div className="item-empty">Aucune recette.</div>}
+          </div>
         </div>
-        <div>
+        <div className="recipe-editor">
           {selected ? (
-            <RecipeEditor key={selected} recipe={recipe} cat={cat.data}
+            <RecipeEditor key={selected} recipe={recipe} cat={cat.data} onBack={() => setSelected(null)}
+              reloadCat={cat.reload}
               onSaved={id => { cat.reload(); setSelected(id) }}
               onArchived={() => { cat.reload(); setSelected(null) }} />
-          ) : (
-            <Empty>Choisissez une recette dans la liste, ou créez-en une nouvelle.</Empty>
-          )}
+          ) : <Empty>Choisissez une recette dans la liste, ou créez-en une nouvelle.</Empty>}
         </div>
       </div>
     </>
   )
 }
 
-function RecipeEditor({ recipe, cat, onSaved, onArchived }) {
+function RecipeEditor({ recipe, cat, onBack, onSaved, onArchived, reloadCat }) {
   const isNew = !recipe
   const [form, setForm] = useState(() => recipe
     ? { ...recipe, yield_qty: String(recipe.yield_qty), sale_price: String(recipe.sale_price) }
     : { name: '', category: 'Pain', yield_qty: '10', sale_price: '', extra_allergens: [], traces: [], instructions: '', active: true })
   const [lines, setLines] = useState(() => (recipe ? cat.itemsByRecipe[recipe.id] || [] : []).map(i => ({ article_id: i.article_id, quantity: String(i.quantity) })))
-  const [dirty, setDirty] = useState(false)
+  const [extraArticles, setExtraArticles] = useState([])
+  const [dirty, setDirty] = useState(isNew)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState(null)
-  const [batches, setBatches] = useState('1')
+  const [newIng, setNewIng] = useState(null) // index de ligne qui attend un nouvel ingrédient
+
+  const articles = useMemo(() => [...cat.articles, ...extraArticles].sort((a, b) => a.name.localeCompare(b.name)), [cat.articles, extraArticles])
+  const articlesById = useMemo(() => Object.fromEntries(articles.map(a => [a.id, a])), [articles])
 
   const set = patch => { setForm(f => ({ ...f, ...patch })); setDirty(true) }
   const setLine = (i, patch) => { setLines(ls => ls.map((l, j) => (j === i ? { ...l, ...patch } : l))); setDirty(true) }
 
   const yieldQty = toNumber(form.yield_qty) || 1
   const salePrice = toNumber(form.sale_price)
-  const batchCost = lines.reduce((s, l) => s + lineCost(toNumber(l.quantity), cat.articlesById[l.article_id]), 0)
+  const batchCost = lines.reduce((s, l) => s + lineCost(toNumber(l.quantity), articlesById[l.article_id]), 0)
   const unitCost = batchCost / yieldQty
   const margin = salePrice - unitCost
   const marginPct = salePrice ? (margin / salePrice) * 100 : 0
   const totalWeight = lines.reduce((s, l) => {
-    const a = cat.articlesById[l.article_id]
+    const a = articlesById[l.article_id]
     return a && a.unit !== 'pièce' ? s + toNumber(l.quantity) : s
   }, 0)
 
-  const autoAllergens = useMemo(() => allergensFromLines(lines, cat.articlesById).contains, [lines, cat.articlesById])
-  const finalAlg = allergensFromLines(lines, cat.articlesById, form.extra_allergens, form.traces)
+  const autoAllergens = useMemo(() => allergensFromLines(lines, articlesById).contains, [lines, articlesById])
+  const finalAlg = allergensFromLines(lines, articlesById, form.extra_allergens, form.traces)
 
   function toggleAllergen(key) {
     if (autoAllergens.includes(key)) return
     const inExtra = form.extra_allergens.includes(key)
     const inTraces = form.traces.includes(key)
-    // cycle : absent → contient → traces → absent
     if (!inExtra && !inTraces) set({ extra_allergens: [...form.extra_allergens, key] })
     else if (inExtra) set({ extra_allergens: form.extra_allergens.filter(k => k !== key), traces: [...form.traces, key] })
     else set({ traces: form.traces.filter(k => k !== key) })
@@ -105,7 +110,6 @@ function RecipeEditor({ recipe, cat, onSaved, onArchived }) {
 
   async function save() {
     if (!form.name.trim()) return setError('Donnez un nom à la recette.')
-    if (yieldQty <= 0) return setError('Le rendement doit être supérieur à 0.')
     setBusy(true); setError(null)
     try {
       const id = await q(supabase.rpc('save_recipe', {
@@ -123,42 +127,25 @@ function RecipeEditor({ recipe, cat, onSaved, onArchived }) {
     if (!confirm(recipe.active ? `Archiver « ${recipe.name} » ? Elle ne sera plus commandable.` : `Réactiver « ${recipe.name} » ?`)) return
     try {
       await q(supabase.from('recipes').update({ active: !recipe.active }).eq('id', recipe.id))
-      notify(recipe.active ? 'Recette archivée' : 'Recette réactivée')
-      onArchived()
+      notify(recipe.active ? 'Recette archivée' : 'Recette réactivée'); onArchived()
     } catch (e) { notify(e.message, 'error') }
   }
 
-  // Simulation de production
-  const b = toNumber(batches)
-  const needs = lines.filter(l => l.article_id && toNumber(l.quantity) > 0).map(l => {
-    const a = cat.articlesById[l.article_id]
-    const need = (toNumber(l.quantity) * b) / unitFactor(a.unit)
-    return { a, need, ok: Number(a.stock) >= need }
-  })
-  const allOk = needs.every(n => n.ok)
-
-  async function produce() {
-    try {
-      let qty
-      try { qty = await q(supabase.rpc('produce_recipe', { p_recipe: recipe.id, p_batches: b })) }
-      catch (e) {
-        if (!/insuffisant/i.test(e.message) || !confirm(e.message + '\n\nProduire quand même ? Le stock matières passera en négatif.')) throw e
-        qty = await q(supabase.rpc('produce_recipe', { p_recipe: recipe.id, p_batches: b, p_allow_negative: true }))
-      }
-      notify(`${num(qty)} × ${recipe.name} ajoutés au stock produit`)
-      onSaved(recipe.id)
-    } catch (e) { notify(e.message, 'error') }
+  function back() {
+    if (dirty && !isNew && !confirm('Quitter sans enregistrer les modifications ?')) return
+    onBack()
   }
 
   return (
-    <div className="stack">
+    <div className="stack" style={{ paddingBottom: dirty ? 70 : 0 }}>
+      <div className="row only-mobile" style={{ display: 'flex' }}>
+        <button className="ghost" onClick={back} style={{ paddingLeft: 4 }}><Icon name="back" size={20} />Recettes</button>
+      </div>
+
       <div className="panel stack">
         <div className="panel-head" style={{ marginBottom: 0 }}>
           <h2>{isNew ? 'Nouvelle recette' : form.name || 'Recette'}</h2>
-          <div className="row">
-            {!isNew && <button className="small danger" onClick={toggleArchive}>{recipe.active ? 'Archiver' : 'Réactiver'}</button>}
-            <button className="primary" onClick={save} disabled={busy || (!dirty && !isNew)}>{busy ? 'Enregistrement…' : 'Enregistrer'}</button>
-          </div>
+          {!isNew && <button className="small danger" onClick={toggleArchive}>{recipe.active ? 'Archiver' : 'Réactiver'}</button>}
         </div>
         <ErrorBox error={error} />
         <div className="grid-2">
@@ -177,47 +164,33 @@ function RecipeEditor({ recipe, cat, onSaved, onArchived }) {
       <div className="panel">
         <div className="panel-head">
           <h2>Ingrédients pour une fournée</h2>
-          {totalWeight > 0 && <span className="muted small-text">Poids de pâte ≈ {num(totalWeight / 1000, 3)} kg · {num(totalWeight / yieldQty, 0)} g par pièce</span>}
+          {totalWeight > 0 && <span className="muted small-text">≈ {num(totalWeight / 1000, 3)} kg · {num(totalWeight / yieldQty, 0)} g / pièce</span>}
         </div>
-        {!cat.articles.length ? (
-          <Empty>Ajoutez d’abord des articles dans « Stock matières ».</Empty>
-        ) : (
-          <>
-            <div className="table-wrap">
-              <table>
-                <thead><tr><th>Article</th><th className="num">Quantité</th><th className="num">Prix unitaire</th><th className="num">Coût</th><th></th></tr></thead>
-                <tbody>
-                  {lines.map((l, i) => {
-                    const a = cat.articlesById[l.article_id]
-                    return (
-                      <tr key={i}>
-                        <td style={{ minWidth: 200 }}>
-                          <select value={l.article_id} onChange={e => setLine(i, { article_id: e.target.value })} aria-label="Article">
-                            <option value="">Choisir un article…</option>
-                            {cat.articles.map(x => <option key={x.id} value={x.id}>{x.name}</option>)}
-                          </select>
-                        </td>
-                        <td className="num">
-                          <span className="row" style={{ justifyContent: 'flex-end', gap: 6, flexWrap: 'nowrap' }}>
-                            <input className="qty" inputMode="decimal" value={l.quantity} onChange={e => setLine(i, { quantity: e.target.value })} aria-label="Quantité" />
-                            <span className="muted" style={{ width: 22 }}>{a ? subUnit(a.unit) : ''}</span>
-                          </span>
-                        </td>
-                        <td className="num muted">{a ? `${eur(a.price)}/${a.unit}` : ''}</td>
-                        <td className="num"><b>{eur(lineCost(toNumber(l.quantity), a))}</b></td>
-                        <td className="num"><button className="ghost square" aria-label="Retirer" onClick={() => { setLines(ls => ls.filter((_, j) => j !== i)); setDirty(true) }}>×</button></td>
-                      </tr>
-                    )
-                  })}
-                  {!lines.length && <tr><td colSpan={5} className="muted">Aucun ingrédient pour l’instant.</td></tr>}
-                </tbody>
-              </table>
-            </div>
-            <div style={{ marginTop: 10 }}>
-              <button onClick={() => { setLines(ls => [...ls, { article_id: '', quantity: '' }]); setDirty(true) }}>Ajouter un ingrédient</button>
-            </div>
-          </>
-        )}
+        <div>
+          {lines.map((l, i) => {
+            const a = articlesById[l.article_id]
+            return (
+              <div key={i} className="ing-row">
+                <select className="ing-art" value={l.article_id} aria-label="Ingrédient"
+                  onChange={e => e.target.value === '__new' ? setNewIng(i) : setLine(i, { article_id: e.target.value })}>
+                  <option value="">Choisir un ingrédient…</option>
+                  {articles.map(x => <option key={x.id} value={x.id}>{x.name}</option>)}
+                  <option value="__new">+ Nouvel ingrédient…</option>
+                </select>
+                <span className="ing-qty">
+                  <input inputMode="decimal" value={l.quantity} onChange={e => setLine(i, { quantity: e.target.value })} aria-label="Quantité" placeholder="0" />
+                  <span>{a ? subUnit(a.unit) : ''}</span>
+                </span>
+                <span className="ing-cost">{eur(lineCost(toNumber(l.quantity), a))}{a && <small>{eur(a.price)}/{a.unit}</small>}</span>
+                <button className="ghost icon ing-del" aria-label="Retirer l’ingrédient" onClick={() => { setLines(ls => ls.filter((_, j) => j !== i)); setDirty(true) }}><Icon name="close" size={20} /></button>
+              </div>
+            )
+          })}
+          {!lines.length && <p className="muted" style={{ padding: '6px 0 12px' }}>Aucun ingrédient pour l’instant.</p>}
+        </div>
+        <div className="row" style={{ marginTop: 12 }}>
+          <button onClick={() => { setLines(ls => [...ls, { article_id: '', quantity: '' }]); setDirty(true) }}><Icon name="plus" size={20} />Ajouter un ingrédient</button>
+        </div>
       </div>
 
       <div className="totals">
@@ -228,22 +201,17 @@ function RecipeEditor({ recipe, cat, onSaved, onArchived }) {
       </div>
 
       <div className="panel stack">
-        <div className="panel-head" style={{ marginBottom: 0 }}>
-          <h2>Allergènes</h2>
-          <AllergenBadges {...finalAlg} />
-        </div>
-        <p className="muted small-text">
-          Les allergènes des articles sont ajoutés automatiquement (grisés). Touchez un autre allergène pour l’ajouter : une fois = contient, deux fois = traces possibles, trois fois = retirer.
-        </p>
-        <div className="row" style={{ gap: 6 }}>
+        <div className="panel-head" style={{ marginBottom: 0 }}><h2>Allergènes</h2></div>
+        <AllergenBadges {...finalAlg} />
+        <p className="muted small-text">Ceux des ingrédients sont ajoutés seuls (grisés). Touchez un autre allergène : une fois = contient, deux fois = traces, trois fois = retirer.</p>
+        <div className="chips">
           {ALLERGENS.map(a => {
             const auto = autoAllergens.includes(a.key)
             const on = auto || form.extra_allergens.includes(a.key)
             const trace = !on && form.traces.includes(a.key)
             return (
               <button type="button" key={a.key} onClick={() => toggleAllergen(a.key)} aria-pressed={on || trace}
-                className={'alg-toggle' + (on ? ' on' : '') + (trace ? ' trace-on' : '') + (auto ? ' locked' : '')}
-                title={auto ? 'Vient des ingrédients' : undefined}>
+                className={'chip-toggle' + (on ? ' on' : '') + (trace ? ' trace-on' : '') + (auto ? ' locked' : '')}>
                 {a.icon} {a.label}{trace ? ' (traces)' : ''}
               </button>
             )
@@ -253,46 +221,65 @@ function RecipeEditor({ recipe, cat, onSaved, onArchived }) {
 
       <div className="panel">
         <Field label="Méthode / notes de fabrication">
-          <textarea value={form.instructions || ''} onChange={e => set({ instructions: e.target.value })} rows={5} />
+          <textarea value={form.instructions || ''} onChange={e => set({ instructions: e.target.value })} rows={6} />
         </Field>
       </div>
 
-      {!isNew && (
-        <div className="panel stack">
-          <h2>Lancer une production</h2>
-          {dirty && <div className="info-box">Enregistrez d’abord vos modifications : la production utilise la recette enregistrée.</div>}
-          <div className="grid-3">
-            <Field label="Nombre de fournées"><input inputMode="decimal" value={batches} onChange={e => setBatches(e.target.value)} /></Field>
-            <Field label="Ou nombre de pièces voulues">
-              <input inputMode="decimal" value={b ? Math.round(b * yieldQty * 100) / 100 : ''}
-                onChange={e => setBatches(String(Math.round((toNumber(e.target.value) / yieldQty) * 1000) / 1000))} />
-            </Field>
-            <Field label="Coût de cette production"><input value={eur(batchCost * b)} disabled /></Field>
-          </div>
-          {needs.length > 0 && (
-            <div className="table-wrap">
-              <table>
-                <thead><tr><th>Article</th><th className="num">Nécessaire</th><th className="num">En stock</th><th className="num">État</th></tr></thead>
-                <tbody>
-                  {needs.map(n => (
-                    <tr key={n.a.id} className={n.ok ? '' : 'out'}>
-                      <td>{n.a.name}</td>
-                      <td className="num">{num(n.need, 3)} {n.a.unit}</td>
-                      <td className="num">{num(n.a.stock, 3)} {n.a.unit}</td>
-                      <td className="num">{n.ok ? <span className="ok">OK</span> : <span className="ko">Manque {num(n.need - n.a.stock, 3)}</span>}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )}
-          <div className="row end">
-            <button className="primary" onClick={produce} disabled={dirty || b <= 0 || !needs.length}>
-              Produire {num(b * yieldQty)} pièce{b * yieldQty > 1 ? 's' : ''}{allOk ? '' : ' (stock insuffisant)'}
-            </button>
-          </div>
+      {(dirty || isNew) && (
+        <div className="action-bar">
+          <span>{isNew ? 'Nouvelle recette' : 'Modifications non enregistrées'}</span>
+          <span className="spacer" />
+          <button className="accent" onClick={save} disabled={busy}>{busy ? 'Enregistrement…' : 'Enregistrer la recette'}</button>
         </div>
       )}
+
+      {newIng !== null && (
+        <QuickIngredient onClose={() => setNewIng(null)} onCreated={a => {
+          setExtraArticles(x => [...x, a]); setLine(newIng, { article_id: a.id }); setNewIng(null); reloadCat()
+        }} />
+      )}
     </div>
+  )
+}
+
+function QuickIngredient({ onClose, onCreated }) {
+  const [f, setF] = useState({ name: '', unit: 'kg', price: '', allergens: [] })
+  const [error, setError] = useState(null)
+  const set = p => setF(x => ({ ...x, ...p }))
+  async function submit(e) {
+    e.preventDefault()
+    if (!f.name.trim()) return setError('Le nom est obligatoire.')
+    try {
+      const rows = await q(supabase.from('articles').insert({ name: f.name.trim(), unit: f.unit, price: toNumber(f.price), allergens: f.allergens }).select())
+      notify('Ingrédient ajouté'); onCreated(rows[0])
+    } catch (err) { setError(err.message) }
+  }
+  return (
+    <Modal title="Nouvel ingrédient" onClose={onClose}>
+      <form className="stack" onSubmit={submit}>
+        <ErrorBox error={error} />
+        <Field label="Nom"><input autoFocus value={f.name} onChange={e => set({ name: e.target.value })} placeholder="Ex. : Raisins secs" /></Field>
+        <div className="grid-2">
+          <Field label="Acheté au">
+            <select value={f.unit} onChange={e => set({ unit: e.target.value })}><option value="kg">kg</option><option value="L">L</option><option value="pièce">pièce</option></select>
+          </Field>
+          <Field label={`Prix par ${f.unit} (€)`}><input inputMode="decimal" value={f.price} onChange={e => set({ price: e.target.value })} /></Field>
+        </div>
+        <div className="field">
+          <span>Allergènes</span>
+          <div className="chips">
+            {ALLERGENS.map(a => {
+              const on = f.allergens.includes(a.key)
+              return <button type="button" key={a.key} aria-pressed={on} className={'chip-toggle' + (on ? ' on' : '')}
+                onClick={() => set({ allergens: on ? f.allergens.filter(k => k !== a.key) : [...f.allergens, a.key] })}>{a.icon} {a.label}</button>
+            })}
+          </div>
+        </div>
+        <div className="row end">
+          <button type="button" onClick={onClose}>Annuler</button>
+          <button className="primary">Ajouter l’ingrédient</button>
+        </div>
+      </form>
+    </Modal>
   )
 }

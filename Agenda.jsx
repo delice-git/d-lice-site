@@ -64,12 +64,11 @@ export default function Agenda({ goTo }) {
       <ErrorBox error={data.error} />
       <div className="agenda">
         <div className="cal">
-          <div className="row" style={{ padding: '10px 12px', borderBottom: '1px solid var(--line)' }}>
+          <div className="cal-nav">
             <button className="small" onClick={() => move(-1)} aria-label="Mois précédent">‹</button>
-            <h2 style={{ textTransform: 'capitalize', minWidth: 180, textAlign: 'center' }}>{monthLabel}</h2>
+            <h2>{monthLabel}</h2>
             <button className="small" onClick={() => move(1)} aria-label="Mois suivant">›</button>
-            <span className="spacer" />
-            <button className="small" onClick={() => { const d = new Date(); setCursor(new Date(d.getFullYear(), d.getMonth(), 1)); setSelected(today) }}>Aujourd’hui</button>
+                        <button className="small" onClick={() => { const d = new Date(); setCursor(new Date(d.getFullYear(), d.getMonth(), 1)); setSelected(today) }}>Aujourd’hui</button>
           </div>
           <div className="cal-head">{WEEKDAYS.map(d => <div key={d}>{d}</div>)}</div>
           {data.loading && !data.data ? <Loading /> : (
@@ -84,8 +83,9 @@ export default function Agenda({ goTo }) {
                     className={'cal-day' + (other ? ' other' : '') + (iso === today ? ' today' : '') + (iso === selected ? ' selected' : '') + (n ? ' has' : '')}
                     aria-label={`${d.toLocaleDateString('fr-BE', { day: 'numeric', month: 'long' })}${n ? `, ${n} élément${n > 1 ? 's' : ''}` : ''}`}>
                     <span className="d">{d.getDate()}</span>
-                    {entry?.events.slice(0, 2).map(e => <span key={e.id} className="chip" style={{ background: e.color }}>{e.all_day ? '' : fmtTime(e.starts_at) + ' '}{e.title}</span>)}
-                    {entry?.orders.length > 0 && <span className="chip order-chip">{entry.orders.length} à livrer</span>}
+                    {entry?.events.slice(0, 2).map(e => <span key={e.id} className="ev-chip" style={{ background: e.color }}>{e.all_day ? '' : fmtTime(e.starts_at) + ' '}{e.title}</span>)}
+                    {entry?.orders.length > 0 && <span className="ev-chip order-chip">{entry.orders.length} à livrer</span>}
+                    {n > 0 && <span className="dots">{Array.from({ length: Math.min(n, 3) }, (_, k) => <i key={k} />)}</span>}
                     {entry?.events.length > 2 && <span className="muted small-text">+{entry.events.length - 2}</span>}
                   </button>
                 )

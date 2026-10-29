@@ -3,6 +3,7 @@ import { supabase } from './supabase'
 import { q, useData } from './useData'
 import { ROLE_LABEL } from './format'
 import { ErrorBox, Field, Loading, Modal, PageHeader } from './ui'
+import { Icon } from './icons'
 import { notify } from './Toast'
 
 export default function Users({ profile, shops, reloadShops }) {
@@ -15,10 +16,8 @@ export default function Users({ profile, shops, reloadShops }) {
         && !confirm('Vous allez retirer vos propres droits de production. Continuer ?')) return
     const next = { ...patch }
     if (next.role && next.role !== 'magasin') next.shop_id = null
-    try {
-      await q(supabase.from('profiles').update(next).eq('id', u.id))
-      notify('Compte mis à jour'); users.reload()
-    } catch (e) { notify(e.message, 'error') }
+    try { await q(supabase.from('profiles').update(next).eq('id', u.id)); notify('Compte mis à jour'); users.reload() }
+    catch (e) { notify(e.message, 'error') }
   }
 
   async function renameShop(s, name) {
@@ -39,52 +38,47 @@ export default function Users({ profile, shops, reloadShops }) {
 
   return (
     <>
-      <PageHeader title="Comptes & magasins" subtitle="Chaque magasin se connecte avec son propre compte et ne voit que son stock et ses commandes. La production voit tout.">
-        <button className="primary" onClick={() => setCreating(true)}>Créer un compte</button>
+      <PageHeader title="Comptes & magasins" subtitle="Chaque magasin a son compte et ne voit que son stock et ses commandes. La production voit tout.">
+        <button className="primary" onClick={() => setCreating(true)}><Icon name="plus" size={20} />Créer un compte</button>
       </PageHeader>
       <ErrorBox error={users.error} />
       {pending > 0 && <div className="info-box" style={{ marginBottom: 16 }}>{pending} compte{pending > 1 ? 's' : ''} en attente : choisissez un rôle pour {pending > 1 ? 'les' : 'l’'}activer.</div>}
 
-      <div className="table-wrap">
-        <table>
-          <thead><tr><th>Compte</th><th>Rôle</th><th>Magasin</th></tr></thead>
-          <tbody>
-            {users.data.map(u => (
-              <tr key={u.id} className={u.role === 'en_attente' || (u.role === 'magasin' && !u.shop_id) ? 'low' : ''}>
-                <td><b>{u.full_name || u.email}</b>{u.full_name && u.full_name !== u.email && <><br /><span className="muted small-text">{u.email}</span></>}{u.id === profile.id && <span className="muted small-text"> (vous)</span>}</td>
-                <td style={{ width: 200 }}>
-                  <select value={u.role} onChange={e => updateUser(u, { role: e.target.value })} aria-label={`Rôle de ${u.email}`}>
-                    {Object.entries(ROLE_LABEL).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
-                  </select>
-                </td>
-                <td style={{ width: 220 }}>
-                  {u.role === 'magasin' ? (
-                    <select value={u.shop_id || ''} onChange={e => updateUser(u, { shop_id: e.target.value || null })} aria-label={`Magasin de ${u.email}`}>
-                      <option value="">— Choisir —</option>
-                      {shops.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
-                    </select>
-                  ) : <span className="muted">Tous</span>}
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
+      <div className="list">
+        {users.data.map(u => (
+          <div key={u.id} className={'item stack-sm' + (u.role === 'en_attente' || (u.role === 'magasin' && !u.shop_id) ? ' low' : '')}>
+            <span className="item-main">
+              <span className="item-title">{u.full_name || u.email}{u.id === profile.id && <span className="muted" style={{ fontWeight: 400 }}> (vous)</span>}</span>
+              {u.full_name && u.full_name !== u.email && <span className="item-sub">{u.email}</span>}
+            </span>
+            <span className="item-side" style={{ flexWrap: 'wrap' }}>
+              <select value={u.role} onChange={e => updateUser(u, { role: e.target.value })} aria-label={`Rôle de ${u.email}`} style={{ width: 170 }}>
+                {Object.entries(ROLE_LABEL).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
+              </select>
+              {u.role === 'magasin' && (
+                <select value={u.shop_id || ''} onChange={e => updateUser(u, { shop_id: e.target.value || null })} aria-label={`Magasin de ${u.email}`} style={{ width: 170 }}>
+                  <option value="">— Magasin —</option>
+                  {shops.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+                </select>
+              )}
+            </span>
+          </div>
+        ))}
       </div>
 
-      <div className="panel" style={{ marginTop: 22 }}>
-        <div className="panel-head"><h2>Magasins</h2></div>
-        <div className="stack" style={{ gap: 10 }}>
-          {shops.map(s => (
-            <div key={s.id} className="row">
-              <input defaultValue={s.name} onBlur={e => renameShop(s, e.target.value)} onKeyDown={e => e.key === 'Enter' && e.currentTarget.blur()} style={{ maxWidth: 340 }} aria-label="Nom du magasin" />
-              <span className="muted small-text">{(users.data || []).filter(u => u.shop_id === s.id).length} compte(s)</span>
-            </div>
-          ))}
-          <form className="row" onSubmit={addShop}>
-            <input placeholder="Nom d’un nouveau magasin" value={newShop} onChange={e => setNewShop(e.target.value)} style={{ maxWidth: 340 }} />
-            <button>Ajouter le magasin</button>
-          </form>
-        </div>
+      <h2 style={{ margin: '26px 0 10px' }}>Magasins</h2>
+      <div className="panel stack" style={{ gap: 10 }}>
+        {shops.map(s => (
+          <div key={s.id} className="row" style={{ flexWrap: 'nowrap' }}>
+            <Icon name="store" />
+            <input defaultValue={s.name} onBlur={e => renameShop(s, e.target.value)} onKeyDown={e => e.key === 'Enter' && e.currentTarget.blur()} aria-label="Nom du magasin" />
+          </div>
+        ))}
+        <form className="row" onSubmit={addShop} style={{ flexWrap: 'nowrap' }}>
+          <input placeholder="Nom d’un nouveau magasin" value={newShop} onChange={e => setNewShop(e.target.value)} />
+          <button>Ajouter</button>
+        </form>
+        <p className="muted small-text">Modifiez un nom puis touchez ailleurs pour l’enregistrer.</p>
       </div>
 
       {creating && <CreateUser shops={shops} onClose={() => setCreating(false)} onCreated={() => { setCreating(false); users.reload() }} />}
@@ -111,9 +105,8 @@ function CreateUser({ shops, onClose, onCreated }) {
         body: JSON.stringify(f),
       })
       const body = await res.json().catch(() => null)
-      if (!res.ok || !body) throw new Error(body?.error || 'La création de compte ne fonctionne qu’une fois le site déployé sur Vercel avec SUPABASE_SERVICE_ROLE_KEY. Sinon, créez le compte dans Supabase → Authentication → Add user : il apparaîtra ici en attente.')
-      notify(`Compte ${f.email} créé`)
-      onCreated()
+      if (!res.ok || !body) throw new Error(body?.error || 'Création impossible depuis le site (fichier api/create-user.js ou clé SUPABASE_SERVICE_ROLE_KEY manquants). Créez le compte dans Supabase → Authentication → Add user : il apparaîtra ici en attente.')
+      notify(`Compte ${f.email} créé`); onCreated()
     } catch (err) { setError(err.message) } finally { setBusy(false) }
   }
 
@@ -121,10 +114,10 @@ function CreateUser({ shops, onClose, onCreated }) {
     <Modal title="Créer un compte" onClose={onClose}>
       <form className="stack" onSubmit={submit}>
         <ErrorBox error={error} />
-        <Field label="Nom affiché"><input value={f.full_name} onChange={e => set({ full_name: e.target.value })} placeholder="Ex. : Magasin centre-ville" /></Field>
-        <Field label="E-mail de connexion"><input type="email" required value={f.email} onChange={e => set({ email: e.target.value })} /></Field>
+        <Field label="Nom affiché"><input value={f.full_name} onChange={e => set({ full_name: e.target.value })} placeholder="Ex. : Magasin Thiange" /></Field>
+        <Field label="E-mail de connexion"><input type="email" required value={f.email} onChange={e => set({ email: e.target.value })} autoCapitalize="none" /></Field>
         <Field label="Mot de passe" hint="8 caractères minimum. Communiquez-le au magasin.">
-          <input type="text" required value={f.password} onChange={e => set({ password: e.target.value })} autoComplete="new-password" />
+          <input type="text" required value={f.password} onChange={e => set({ password: e.target.value })} autoComplete="new-password" autoCapitalize="none" />
         </Field>
         <div className="grid-2">
           <Field label="Rôle">
@@ -134,9 +127,7 @@ function CreateUser({ shops, onClose, onCreated }) {
           </Field>
           {f.role === 'magasin' && (
             <Field label="Magasin">
-              <select value={f.shop_id} onChange={e => set({ shop_id: e.target.value })}>
-                {shops.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
-              </select>
+              <select value={f.shop_id} onChange={e => set({ shop_id: e.target.value })}>{shops.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}</select>
             </Field>
           )}
         </div>
