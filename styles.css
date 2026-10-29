@@ -562,3 +562,8 @@ tr.clickable:hover td { background: var(--surface-2); }
   .num-edit { width: 56px; padding: 0 4px; }
   .login-side .logo { width: 170px; }
 }
+
+/* Ligne de commande « article libre » : le texte prend toute la largeur */
+.line.free { grid-template-columns: 1fr auto; }
+.line.free .free-text { grid-column: 1 / -1; }
+.line.free .qty { justify-self: start; }

@@ -18,7 +18,7 @@ export default function Orders({ profile, shops, isStaff }) {
   const cat = useData(loadCatalogue, [])
 
   const orders = useData(async () => {
-    let req = supabase.from('orders').select('*, shops(name), order_items(id, recipe_id, quantity)')
+    let req = supabase.from('orders').select('*, shops(name), order_items(id, recipe_id, label, quantity)')
     req = view === 'actives'
       ? req.in('status', ACTIVE).order('due_date').order('id')
       : req.in('status', ['livree', 'annulee']).order('due_date', { ascending: false }).order('id', { ascending: false }).limit(150)
@@ -43,15 +43,19 @@ export default function Orders({ profile, shops, isStaff }) {
 
   const needs = useMemo(() => {
     if (!isStaff || view !== 'actives' || !orders.data || !cat.data || !prodStock.data) return []
-    const tot = {}
-    for (const o of orders.data) for (const it of o.order_items) tot[it.recipe_id] = (tot[it.recipe_id] || 0) + Number(it.quantity)
-    return Object.entries(tot).map(([id, ordered]) => {
+    const tot = {}, free = {}
+    for (const o of orders.data) for (const it of o.order_items) {
+      if (it.recipe_id) tot[it.recipe_id] = (tot[it.recipe_id] || 0) + Number(it.quantity)
+      else free[it.label] = (free[it.label] || 0) + Number(it.quantity)
+    }
+    const freeRows = Object.entries(free).map(([label, ordered]) => ({ id: 'free:' + label, name: label, free: true, ordered }))
+    return [...Object.entries(tot).map(([id, ordered]) => {
       const r = recipeById[id]
       const y = Number(r?.yield_qty || 1)
       const stock = prodStock.data[id] || 0
       const missing = Math.max(0, ordered - stock)
       return { id, name: r?.name || '?', yield: y, ordered, stock, missing, batches: Math.ceil(missing / y) }
-    }).filter(n => n.missing > 0).sort((a, b) => b.missing - a.missing)
+    }).filter(n => n.missing > 0).sort((a, b) => b.missing - a.missing), ...freeRows]
   }, [isStaff, view, orders.data, cat.data, prodStock.data, recipeById])
 
   async function changeStatus(o, status) {
@@ -104,6 +108,15 @@ export default function Orders({ profile, shops, isStaff }) {
           <h2 style={{ marginBottom: 10 }}>À produire</h2>
           <div className="list">
             {needs.map(n => (
+              n.free ? (
+                <div key={n.id} className="item stack-sm">
+                  <span className="item-main">
+                    <span className="item-title">{n.name}</span>
+                    <span className="item-sub">Article libre · à préparer</span>
+                  </span>
+                  <span className="item-figure"><b>× {num(n.ordered)}</b></span>
+                </div>
+              ) : (
               <div key={n.id} className="item stack-sm low">
                 <span className="item-main">
                   <span className="item-title">{n.name}</span>
@@ -112,7 +125,7 @@ export default function Orders({ profile, shops, isStaff }) {
                 <span className="item-side">
                   <button className="small" onClick={() => produce(n)}>Produire {n.batches} fournée{n.batches > 1 ? 's' : ''} ({num(n.batches * n.yield)} pcs)</button>
                 </span>
-              </div>
+              </div>)
             ))}
           </div>
         </div>
@@ -138,7 +151,7 @@ export default function Orders({ profile, shops, isStaff }) {
               </div>
               <ul className="order-items">
                 {o.order_items.map(it => (
-                  <li key={it.id}><span>{recipeById[it.recipe_id]?.name || 'Produit supprimé'}</span><b>× {num(it.quantity)}</b></li>
+                  <li key={it.id}><span>{it.recipe_id ? (recipeById[it.recipe_id]?.name || 'Produit supprimé') : <>{it.label} <span className="badge" style={{ marginLeft: 4 }}>libre</span></>}</span><b>× {num(it.quantity)}</b></li>
                 ))}
               </ul>
               {o.notes && <p className="muted small-text">{o.notes}</p>}
@@ -174,7 +187,7 @@ function OrderForm({ profile, shops, isStaff, cat, onClose, onSaved }) {
   const [due, setDue] = useState(addDaysISO(1))
   const [customer, setCustomer] = useState({ name: '', phone: '' })
   const [notes, setNotes] = useState('')
-  const [lines, setLines] = useState([{ recipe_id: '', quantity: '' }])
+  const [lines, setLines] = useState([{ recipe_id: '', label: '', free: false, quantity: '' }])
   const [error, setError] = useState(null)
   const [busy, setBusy] = useState(false)
   const recipes = cat.recipes.filter(r => r.active)
@@ -182,8 +195,10 @@ function OrderForm({ profile, shops, isStaff, cat, onClose, onSaved }) {
 
   async function submit(e) {
     e.preventDefault()
-    const items = lines.filter(l => l.recipe_id && toNumber(l.quantity) > 0).map(l => ({ recipe_id: l.recipe_id, quantity: toNumber(l.quantity) }))
-    if (!items.length) return setError('Ajoutez au moins un produit avec une quantité.')
+    const items = lines
+      .filter(l => toNumber(l.quantity) > 0 && (l.free ? l.label.trim() : l.recipe_id))
+      .map(l => (l.free ? { label: l.label.trim(), quantity: toNumber(l.quantity) } : { recipe_id: l.recipe_id, quantity: toNumber(l.quantity) }))
+    if (!items.length) return setError('Ajoutez au moins un produit (ou un article libre) avec une quantité.')
     if (kind === 'client' && !customer.name.trim()) return setError('Indiquez le nom du client.')
     setBusy(true); setError(null)
     try {
@@ -226,21 +241,31 @@ function OrderForm({ profile, shops, isStaff, cat, onClose, onSaved }) {
             {lines.map((l, i) => {
               const r = recipes.find(x => x.id === l.recipe_id)
               return (
-                <div key={i} className="line">
-                  <select value={l.recipe_id} onChange={e => setLine(i, { recipe_id: e.target.value })} aria-label="Produit">
-                    <option value="">Choisir…</option>
-                    {recipes.map(x => <option key={x.id} value={x.id}>{x.name}</option>)}
-                  </select>
+                <div key={i} className={'line' + (l.free ? ' free' : '')}>
+                  {l.free ? (
+                    <input className="free-text" autoFocus value={l.label} onChange={e => setLine(i, { label: e.target.value })} placeholder="Article libre, ex. : gâteau 3 étages chocolat" aria-label="Article libre" />
+                  ) : (
+                    <select value={l.recipe_id} aria-label="Produit"
+                      onChange={e => e.target.value === '__free' ? setLine(i, { free: true, recipe_id: '' }) : setLine(i, { recipe_id: e.target.value })}>
+                      <option value="">Choisir…</option>
+                      {recipes.map(x => <option key={x.id} value={x.id}>{x.name}</option>)}
+                      <option value="__free">✎ Autre (texte libre)…</option>
+                    </select>
+                  )}
                   <input className="qty" style={{ width: 80 }} inputMode="decimal" placeholder="Qté" value={l.quantity} onChange={e => setLine(i, { quantity: e.target.value })} aria-label="Quantité" />
                   <button type="button" className="ghost icon" aria-label="Retirer la ligne" disabled={lines.length === 1}
                     onClick={() => setLines(ls => ls.filter((_, j) => j !== i))}><Icon name="close" size={20} /></button>
-                  {r && <AllergenBadges {...allergensOf(r, cat)} compact />}
+                  {!l.free && r && <AllergenBadges {...allergensOf(r, cat)} compact />}
                 </div>
               )
             })}
           </div>
         </div>
-        <button type="button" onClick={() => setLines(ls => [...ls, { recipe_id: '', quantity: '' }])}><Icon name="plus" size={20} />Ajouter un produit</button>
+        <div className="row">
+          <button type="button" style={{ flex: 1 }} onClick={() => setLines(ls => [...ls, { recipe_id: '', label: '', free: false, quantity: '' }])}><Icon name="plus" size={20} />Ajouter un produit</button>
+          <button type="button" style={{ flex: 1 }} onClick={() => setLines(ls => [...ls, { recipe_id: '', label: '', free: true, quantity: '' }])}><Icon name="plus" size={20} />Article libre</button>
+        </div>
+        <p className="muted small-text" style={{ marginTop: -6 }}>Un article libre peut être n’importe quoi (gâteau sur mesure, produit pas encore enregistré…). Il ne compte pas dans les stocks.</p>
         <Field label="Remarque pour la production"><textarea value={notes} onChange={e => setNotes(e.target.value)} placeholder="Ex. : bien cuites, inscription « Joyeux anniversaire Léa »…" /></Field>
         <div className="row end">
           <button type="button" onClick={onClose}>Annuler</button>
