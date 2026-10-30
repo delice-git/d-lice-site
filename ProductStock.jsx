@@ -5,6 +5,7 @@ import { eur, fmtDateTime, num, toNumber } from './format'
 import { Empty, ErrorBox, Field, Loading, Modal, PageHeader, QtyCell, SearchBox } from './ui'
 import { Icon } from './icons'
 import { notify } from './Toast'
+import { productName } from './catalogue'
 
 const CATEGORIES = ['Pain', 'Viennoiserie', 'Pâtisserie', 'Snacking', 'Gâteau', 'Boisson', 'Autre']
 
@@ -14,7 +15,7 @@ export default function ProductStock() {
   const [search, setSearch] = useState('')
   const data = useData(async () => {
     const [recipes, stock, orders, batches, items] = await Promise.all([
-      q(supabase.from('recipes').select('id, name, category, yield_qty, sale_price, active').eq('active', true).order('category').order('name')),
+      q(supabase.from('recipes').select('id, name, category, yield_qty, sale_price, active, servings').eq('active', true).order('category').order('name')),
       q(supabase.from('production_stock').select('*')),
       q(supabase.from('orders').select('id, order_items(recipe_id, quantity)').in('status', ['en_attente', 'en_production', 'prete'])),
       q(supabase.from('production_batches').select('*').order('created_at', { ascending: false }).limit(25)),
@@ -71,7 +72,7 @@ export default function ProductStock() {
                 if (r.category !== lastCat) { lastCat = r.category; out.push(<tr key={'g' + r.id} className="grp"><td colSpan={5}>{r.category || 'Sans catégorie'}</td></tr>) }
                 out.push(
                   <tr key={r.id} className={free < 0 ? 'out' : ''}>
-                    <td><b>{r.name}</b>{!hasRecipe && <span className="sub">sans recette</span>}</td>
+                    <td><b>{productName(r)}</b>{!hasRecipe && <span className="sub">sans recette</span>}</td>
                     <td className="c">
                       <QtyCell value={qty} label={r.name} onStep={d => adjust(r.id, d)} onSet={n => adjust(r.id, n - qty)} />
                     </td>
@@ -117,7 +118,7 @@ export default function ProductStock() {
 
 // Produit sans recette : juste un nom, une catégorie et une quantité
 function NewProduct({ categories, onClose, onDone }) {
-  const [f, setF] = useState({ name: '', category: 'Pain', price: '', qty: '' })
+  const [f, setF] = useState({ name: '', category: 'Pain', price: '', qty: '', servings: '' })
   const [error, setError] = useState(null)
   const [busy, setBusy] = useState(false)
   const set = p => setF(x => ({ ...x, ...p }))
@@ -128,7 +129,7 @@ function NewProduct({ categories, onClose, onDone }) {
     try {
       const id = await q(supabase.rpc('save_recipe', {
         p_id: null,
-        p_recipe: { name: f.name.trim(), category: f.category, yield_qty: 1, sale_price: toNumber(f.price), extra_allergens: [], traces: [], active: true },
+        p_recipe: { name: f.name.trim(), category: f.category, yield_qty: 1, servings: Number(f.servings) || null, sale_price: toNumber(f.price), extra_allergens: [], traces: [], active: true },
         p_items: [],
       }))
       if (toNumber(f.qty)) await q(supabase.rpc('adjust_product_stock', { p_recipe: id, p_delta: toNumber(f.qty) }))
@@ -148,6 +149,14 @@ function NewProduct({ categories, onClose, onDone }) {
           </Field>
           <Field label="Prix de vente (€, facultatif)"><input inputMode="decimal" value={f.price} onChange={e => set({ price: e.target.value })} /></Field>
         </div>
+        <Field label="Taille">
+          <select value={f.servings} onChange={e => set({ servings: e.target.value })}>
+            <option value="">À la pièce</option>
+            <option value="4">Gâteau 4 personnes</option>
+            <option value="6">Gâteau 6 personnes</option>
+            <option value="8">Gâteau 8 personnes</option>
+          </select>
+        </Field>
         <Field label="Quantité en stock"><input inputMode="decimal" value={f.qty} onChange={e => set({ qty: e.target.value })} placeholder="0" /></Field>
         <div className="row end">
           <button type="button" onClick={onClose}>Annuler</button>
@@ -181,7 +190,7 @@ function ProduceSheet({ recipes, initial, onClose, onDone }) {
         <Field label="Recette">
           <select value={recipeId} onChange={e => setRecipeId(e.target.value)} required>
             <option value="">Choisir…</option>
-            {recipes.map(x => <option key={x.id} value={x.id}>{x.name}</option>)}
+            {recipes.map(x => <option key={x.id} value={x.id}>{productName(x)}</option>)}
           </select>
         </Field>
         <div className="grid-2">

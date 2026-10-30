@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react'
 import { supabase } from './supabase'
 import { q, useData } from './useData'
-import { loadCatalogue, allergensFromLines, lineCost, recipeCost } from './catalogue'
+import { loadCatalogue, allergensFromLines, lineCost, recipeCost, productName } from './catalogue'
 import { eur, num, subUnit, toNumber } from './format'
 import { ALLERGENS } from './allergenList'
 import { AllergenBadges } from './AllergenBadges'
@@ -45,10 +45,10 @@ export default function Recipes() {
             {list.map(r => (
               <button key={r.id} className={'item' + (selected === r.id ? ' active' : '')} onClick={() => open(r.id)}>
                 <span className="item-main">
-                  <span className="item-title">{r.name}</span>
+                  <span className="item-title">{r.name}{r.servings ? <span className="badge" style={{ marginLeft: 6 }}>{r.servings} pers.</span> : null}</span>
                   <span className="item-sub">{r.category || 'Sans catégorie'}</span>
                 </span>
-                <span className="item-figure"><b style={{ fontSize: '1rem' }}>{eur(recipeCost(r, cat.data) / Number(r.yield_qty))}</b><span>par pièce</span></span>
+                <span className="item-figure"><b style={{ fontSize: '1rem' }}>{eur(recipeCost(r, cat.data) / Number(r.yield_qty))}</b><span>{r.servings ? 'par gâteau' : 'par pièce'}</span></span>
               </button>
             ))}
             {!list.length && <div className="item-empty">Aucune recette.</div>}
@@ -70,8 +70,9 @@ export default function Recipes() {
 function RecipeEditor({ recipe, cat, onBack, onSaved, onArchived, reloadCat }) {
   const isNew = !recipe
   const [form, setForm] = useState(() => recipe
-    ? { ...recipe, yield_qty: String(recipe.yield_qty), sale_price: String(recipe.sale_price) }
-    : { name: '', category: 'Pain', yield_qty: '10', sale_price: '', extra_allergens: [], traces: [], instructions: '', active: true })
+    ? { ...recipe, yield_qty: String(recipe.yield_qty), sale_price: String(recipe.sale_price), servings: recipe.servings || null }
+    : { name: '', category: 'Pain', yield_qty: '10', sale_price: '', extra_allergens: [], traces: [], instructions: '', active: true, servings: null })
+  const [customSize, setCustomSize] = useState('')
   const [lines, setLines] = useState(() => (recipe ? cat.itemsByRecipe[recipe.id] || [] : []).map(i => ({ article_id: i.article_id, quantity: String(i.quantity) })))
   const [extraArticles, setExtraArticles] = useState([])
   const [dirty, setDirty] = useState(isNew)
@@ -86,6 +87,7 @@ function RecipeEditor({ recipe, cat, onBack, onSaved, onArchived, reloadCat }) {
   const setLine = (i, patch) => { setLines(ls => ls.map((l, j) => (j === i ? { ...l, ...patch } : l))); setDirty(true) }
 
   const yieldQty = toNumber(form.yield_qty) || 1
+  const siblings = cat.recipes.filter(x => x.id !== recipe?.id && x.active && x.servings && x.name.trim().toLowerCase() === form.name.trim().toLowerCase()).map(x => x.servings)
   const salePrice = toNumber(form.sale_price)
   const batchCost = lines.reduce((s, l) => s + lineCost(toNumber(l.quantity), articlesById[l.article_id]), 0)
   const unitCost = batchCost / yieldQty
@@ -106,6 +108,32 @@ function RecipeEditor({ recipe, cat, onBack, onSaved, onArchived, reloadCat }) {
     if (!inExtra && !inTraces) set({ extra_allergens: [...form.extra_allergens, key] })
     else if (inExtra) set({ extra_allergens: form.extra_allergens.filter(k => k !== key), traces: [...form.traces, key] })
     else set({ traces: form.traces.filter(k => k !== key) })
+  }
+
+  // Changer la taille : propose de recalculer les quantités proportionnellement
+  function changeSize(n) {
+    const from = form.servings, hasQty = lines.some(l => toNumber(l.quantity) > 0)
+    if (from && n && from !== n && hasQty && confirm(`Recalculer les quantités et le prix pour ${n} personnes (au lieu de ${from}) ?`)) {
+      const f = n / from
+      setLines(ls => ls.map(l => ({ ...l, quantity: String(Math.round(toNumber(l.quantity) * f * 10) / 10) })))
+      if (toNumber(form.sale_price)) { set({ servings: n, sale_price: String(Math.round(toNumber(form.sale_price) * f * 2) / 2) }); return }
+    }
+    set({ servings: n })
+  }
+
+  // Créer une autre taille du même gâteau, quantités et prix recalculés
+  async function createSize(n) {
+    const f = n / form.servings
+    try {
+      const id = await q(supabase.rpc('save_recipe', {
+        p_id: null,
+        p_recipe: { ...form, servings: n, yield_qty: yieldQty, sale_price: Math.round(salePrice * f * 2) / 2 },
+        p_items: lines.filter(l => l.article_id && toNumber(l.quantity) > 0)
+          .map(l => ({ article_id: l.article_id, quantity: Math.round(toNumber(l.quantity) * f * 10) / 10 })),
+      }))
+      notify(`${form.name} — ${n} pers. créé (quantités recalculées)`)
+      onSaved(id)
+    } catch (e) { notify(e.message, 'error') }
   }
 
   async function save() {
@@ -156,14 +184,28 @@ function RecipeEditor({ recipe, cat, onBack, onSaved, onArchived, reloadCat }) {
           </Field>
         </div>
         <div className="grid-2">
-          <Field label="Rendement (pièces par fournée)"><input inputMode="decimal" value={form.yield_qty} onChange={e => set({ yield_qty: e.target.value })} /></Field>
-          <Field label="Prix de vente TTC par pièce (€)"><input inputMode="decimal" value={form.sale_price} onChange={e => set({ sale_price: e.target.value })} /></Field>
+          <Field label={form.servings ? 'Gâteaux par fournée' : 'Rendement (pièces par fournée)'}><input inputMode="decimal" value={form.yield_qty} onChange={e => set({ yield_qty: e.target.value })} /></Field>
+          <Field label={form.servings ? `Prix de vente TTC du gâteau ${form.servings} pers. (€)` : 'Prix de vente TTC par pièce (€)'}><input inputMode="decimal" value={form.sale_price} onChange={e => set({ sale_price: e.target.value })} /></Field>
+        </div>
+        <div className="field">
+          <span>Taille</span>
+          <div className="chips" role="radiogroup" aria-label="Taille">
+            <button type="button" role="radio" aria-checked={!form.servings} className={'chip-toggle size' + (!form.servings ? ' sel' : '')} onClick={() => changeSize(null)}>À la pièce</button>
+            {[4, 6, 8].map(n => (
+              <button type="button" key={n} role="radio" aria-checked={form.servings === n} className={'chip-toggle size' + (form.servings === n ? ' sel' : '')} onClick={() => changeSize(n)}>Gâteau {n} pers.</button>
+            ))}
+            <span className="row" style={{ gap: 6, flexWrap: 'nowrap' }}>
+              <input inputMode="numeric" placeholder="Autre" value={customSize} onChange={e => setCustomSize(e.target.value.replace(/\D/g, ''))} style={{ width: 84 }} aria-label="Autre nombre de personnes" />
+              <button type="button" className="small" disabled={!Number(customSize)} onClick={() => { changeSize(Number(customSize)); setCustomSize('') }}>pers.</button>
+            </span>
+          </div>
+          {form.servings && ![4, 6, 8].includes(form.servings) && <small>Gâteau pour {form.servings} personnes.</small>}
         </div>
       </div>
 
       <div className="panel">
         <div className="panel-head">
-          <h2>Ingrédients pour une fournée</h2>
+          <h2>{form.servings ? `Ingrédients — gâteau ${form.servings} pers.` : 'Ingrédients pour une fournée'}</h2>
           {totalWeight > 0 && <span className="muted small-text">≈ {num(totalWeight / 1000, 3)} kg · {num(totalWeight / yieldQty, 0)} g / pièce</span>}
         </div>
         <div>
@@ -193,10 +235,20 @@ function RecipeEditor({ recipe, cat, onBack, onSaved, onArchived, reloadCat }) {
         </div>
       </div>
 
+      {!isNew && !dirty && form.servings && (
+        <div className="panel row">
+          <span style={{ flex: '1 1 220px' }}><b>Autres tailles</b><br /><span className="muted small-text">Crée une nouvelle recette avec les quantités et le prix recalculés.</span></span>
+          {[4, 6, 8].filter(n => n !== form.servings && !siblings.includes(n)).map(n => (
+            <button key={n} onClick={() => createSize(n)}><Icon name="plus" size={18} />{n} pers.</button>
+          ))}
+          {[4, 6, 8].filter(n => n !== form.servings && !siblings.includes(n)).length === 0 && <span className="ok small-text">Les tailles 4, 6 et 8 existent déjà.</span>}
+        </div>
+      )}
+
       <div className="totals">
         <div><span>Coût d’une fournée</span><b>{eur(batchCost)}</b></div>
-        <div><span>Coût par pièce</span><b>{eur(unitCost)}</b></div>
-        <div><span>Marge par pièce</span><b className={salePrice ? (margin < 0 ? 'neg' : 'pos') : ''}>{salePrice ? eur(margin) : '—'}</b></div>
+        <div><span>{form.servings ? 'Coût par gâteau' : 'Coût par pièce'}</span><b>{eur(unitCost)}</b></div>
+        <div><span>{form.servings ? 'Marge par gâteau' : 'Marge par pièce'}</span><b className={salePrice ? (margin < 0 ? 'neg' : 'pos') : ''}>{salePrice ? eur(margin) : '—'}</b></div>
         <div><span>Taux de marge</span><b className={salePrice ? (marginPct < 0 ? 'neg' : 'pos') : ''}>{salePrice ? `${num(marginPct, 1)} %` : '—'}</b></div>
       </div>
 

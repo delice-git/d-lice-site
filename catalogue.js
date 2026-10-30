@@ -29,3 +29,6 @@ export const lineCost = (qty, article) => article ? (Number(qty) || 0) / unitFac
 export function recipeCost(recipe, cat) {
   return (cat.itemsByRecipe[recipe.id] || []).reduce((s, it) => s + lineCost(it.quantity, cat.articlesById[it.article_id]), 0)
 }
+
+// Nom affiché d'un produit : « Fraisier — 6 pers. » pour les gâteaux
+export const productName = r => (r ? (r.servings ? `${r.name} — ${r.servings} pers.` : r.name) : '')

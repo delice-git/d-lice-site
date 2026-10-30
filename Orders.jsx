@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { supabase } from './supabase'
 import { q, useData } from './useData'
-import { loadCatalogue, allergensOf } from './catalogue'
+import { loadCatalogue, allergensOf, productName } from './catalogue'
 import { addDaysISO, fmtDate, num, todayISO, toNumber } from './format'
 import { AllergenBadges } from './AllergenBadges'
 import { Empty, ErrorBox, Field, KindBadge, Loading, Modal, PageHeader, Seg, StatusBadge, STATUS } from './ui'
@@ -54,7 +54,7 @@ export default function Orders({ profile, shops, isStaff }) {
       const y = Number(r?.yield_qty || 1)
       const stock = prodStock.data[id] || 0
       const missing = Math.max(0, ordered - stock)
-      return { id, name: r?.name || '?', yield: y, ordered, stock, missing, batches: Math.ceil(missing / y) }
+      return { id, name: productName(r) || '?', yield: y, ordered, stock, missing, batches: Math.ceil(missing / y) }
     }).filter(n => n.missing > 0).sort((a, b) => b.missing - a.missing), ...freeRows]
   }, [isStaff, view, orders.data, cat.data, prodStock.data, recipeById])
 
@@ -151,7 +151,7 @@ export default function Orders({ profile, shops, isStaff }) {
               </div>
               <ul className="order-items">
                 {o.order_items.map(it => (
-                  <li key={it.id}><span>{it.recipe_id ? (recipeById[it.recipe_id]?.name || 'Produit supprimé') : <>{it.label} <span className="badge" style={{ marginLeft: 4 }}>libre</span></>}</span><b>× {num(it.quantity)}</b></li>
+                  <li key={it.id}><span>{it.recipe_id ? (productName(recipeById[it.recipe_id]) || 'Produit supprimé') : <>{it.label} <span className="badge" style={{ marginLeft: 4 }}>libre</span></>}</span><b>× {num(it.quantity)}</b></li>
                 ))}
               </ul>
               {o.notes && <p className="muted small-text">{o.notes}</p>}
@@ -248,7 +248,7 @@ function OrderForm({ profile, shops, isStaff, cat, onClose, onSaved }) {
                     <select value={l.recipe_id} aria-label="Produit"
                       onChange={e => e.target.value === '__free' ? setLine(i, { free: true, recipe_id: '' }) : setLine(i, { recipe_id: e.target.value })}>
                       <option value="">Choisir…</option>
-                      {recipes.map(x => <option key={x.id} value={x.id}>{x.name}</option>)}
+                      {recipes.map(x => <option key={x.id} value={x.id}>{productName(x)}</option>)}
                       <option value="__free">✎ Autre (texte libre)…</option>
                     </select>
                   )}

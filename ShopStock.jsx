@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react'
 import { supabase } from './supabase'
 import { q, useData } from './useData'
-import { loadCatalogue, allergensOf } from './catalogue'
+import { loadCatalogue, allergensOf, productName } from './catalogue'
 import { addDaysISO, fmtDateTime, num, todayISO, toNumber } from './format'
 import { AllergenBadges } from './AllergenBadges'
 import { Empty, ErrorBox, Field, Loading, Modal, NumberCell, PageHeader, QtyCell, SearchBox, Seg, StockMoveModal } from './ui'
@@ -155,7 +155,7 @@ function Products({ shopId, cat }) {
                 out.push(
                   <tr key={l.r.id} className={state}>
                     <td>
-                      <button className="name" onClick={() => setMove(l)}>{l.r.name}</button>
+                      <button className="name" onClick={() => setMove(l)}>{productName(l.r)}</button>
                       <span className="hide-sm"><AllergenBadges {...l.alg} compact /></span>
                     </td>
                     <td className="c">
@@ -177,7 +177,7 @@ function Products({ shopId, cat }) {
       <Legend />
 
       {move && (
-        <StockMoveModal title={move.r.name} unit="pièces" current={move.qty} reasons={PRODUCT_REASONS}
+        <StockMoveModal title={productName(move.r)} unit="pièces" current={move.qty} reasons={PRODUCT_REASONS}
           onClose={() => setMove(null)} onSubmit={(delta, reason) => adjust(move.r.id, delta, reason).then(() => notify('Stock mis à jour'))} />
       )}
       {restockOpen && <RestockSheet shopId={shopId} below={below} onClose={() => setRestockOpen(false)} onDone={() => { setRestockOpen(false); stock.reload() }} />}
@@ -201,7 +201,7 @@ function RestockSheet({ shopId, below, onClose, onDone }) {
         <div className="table-wrap">
           <table className="stock-table">
             <thead><tr><th>Produit</th><th className="r">Quantité</th></tr></thead>
-            <tbody>{below.map(l => <tr key={l.r.id}><td>{l.r.name}</td><td className="r big">{num(l.toOrder)}</td></tr>)}</tbody>
+            <tbody>{below.map(l => <tr key={l.r.id}><td>{productName(l.r)}</td><td className="r big">{num(l.toOrder)}</td></tr>)}</tbody>
           </table>
         </div>
         <Field label="Livraison souhaitée le"><input type="date" value={due} min={todayISO()} onChange={e => setDue(e.target.value)} /></Field>
@@ -392,7 +392,7 @@ function Overview({ shops, cat, onPick }) {
                 if (r.category !== lastCat) { lastCat = r.category; out.push(<tr key={'g' + r.id} className="grp"><td colSpan={shops.length + 2}>{r.category || 'Sans catégorie'}</td></tr>) }
                 out.push(
                   <tr key={r.id}>
-                    <td><b>{r.name}</b></td>
+                    <td><b>{productName(r)}</b></td>
                     {shops.map(s => {
                       const row = map[s.id + ':' + r.id]
                       const qty = Number(row?.qty || 0), target = Number(row?.target_qty || 0)

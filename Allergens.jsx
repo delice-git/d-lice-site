@@ -1,6 +1,6 @@
 import { Fragment, useMemo, useState } from 'react'
 import { useData } from './useData'
-import { loadCatalogue, allergensOf } from './catalogue'
+import { loadCatalogue, allergensOf, productName } from './catalogue'
 import { ALLERGENS } from './allergenList'
 import { AllergenBadges } from './AllergenBadges'
 import { Empty, ErrorBox, Loading, PageHeader, SearchBox } from './ui'
@@ -61,7 +61,7 @@ export default function Allergens() {
             {rows.map(({ r, alg }) => (
               <div key={r.id} className="item" style={{ alignItems: 'flex-start' }}>
                 <button className="item-main tap" onClick={() => setOpen(open === r.id ? null : r.id)} aria-expanded={open === r.id}>
-                  <span className="item-title">{r.name}</span>
+                  <span className="item-title">{productName(r)}</span>
                   <AllergenBadges {...alg} />
                   {open === r.id && <span className="item-sub" style={{ marginTop: 4 }}>Ingrédients : {ingredients(r)}</span>}
                 </button>
@@ -82,7 +82,7 @@ export default function Allergens() {
                 {rows.map(({ r, alg }) => (
                   <Fragment key={r.id}>
                     <tr className="clickable" onClick={() => setOpen(open === r.id ? null : r.id)} aria-expanded={open === r.id}>
-                      <td><b>{r.name}</b><br /><span className="muted small-text">{r.category}</span></td>
+                      <td><b>{productName(r)}</b><br /><span className="muted small-text">{r.category}</span></td>
                       {ALLERGENS.map(a => (
                         <td key={a.key} className="cell">
                           {alg.contains.includes(a.key) ? <span className="dot" title={`Contient : ${a.label}`} />

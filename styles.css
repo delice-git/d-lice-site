@@ -567,3 +567,6 @@ tr.clickable:hover td { background: var(--surface-2); }
 .line.free { grid-template-columns: 1fr auto; }
 .line.free .free-text { grid-column: 1 / -1; }
 .line.free .qty { justify-self: start; }
+
+/* Choix de la taille d'un gâteau */
+.chip-toggle.size.sel { background: var(--primary); border-color: var(--primary); color: var(--on-primary); }
