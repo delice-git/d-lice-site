@@ -692,3 +692,15 @@ td.f-com .sc.has { color: var(--blue); }
   .edit-line { flex-wrap: wrap; }
   .edit-line > input { flex: 1 1 100%; }
 }
+
+/* Feuille d'un magasin vue par la production (lecture seule) */
+.ro-info { background: var(--blue-soft); color: var(--blue-ink); padding: 10px 14px; border-radius: var(--r-s); margin-bottom: 12px; font-size: .92rem; }
+.sheet td.ro { text-align: center; height: 44px; padding: 2px; vertical-align: middle; }
+.ro-v { font-family: var(--font-title); font-weight: 700; font-size: 1.05rem; }
+td.f-prod .ro-v { color: var(--red); }
+td.f-com .ro-v { color: var(--blue); }
+.ro-v.circled { display: inline-grid; place-items: center; min-width: 28px; height: 28px; padding: 0 4px; border: 2px solid var(--blue); border-radius: 99px; font-size: .95rem; }
+.ro-v.fini-txt { color: var(--red); font-size: .85rem; }
+.sheet td small.tot, .tot-c { color: var(--green); }
+.sheet td small.tot { display: block; font-family: var(--font-title); font-weight: 800; font-size: .95rem; line-height: 1; margin-top: 1px; }
+.sheet td small.tot::before { content: "Σ "; font-size: .75rem; font-weight: 700; opacity: .8; }

@@ -94,7 +94,8 @@ export default function Feuille({ profile, shops, isStaff }) {
       {!layout.data?.length ? <Empty>La feuille est vide. {isStaff ? 'Ajoutez des lignes avec « Modifier la liste ».' : ''}</Empty>
         : view === 'total'
           ? <TotalSheet key={day} day={day} layout={layout.data} shops={shops} />
-          : <ShopSheet key={view + day} day={day} shopId={view} layout={layout.data} isStaff={isStaff} />}
+          : <ShopSheet key={view + day} day={day} shopId={view} layout={layout.data} isStaff={isStaff}
+              shopName={shops.find(s => s.id === view)?.name} />}
 
       {editing && <SheetEditor layout={layout.data} onClose={() => setEditing(false)} reload={layout.reload} />}
     </>
@@ -102,8 +103,12 @@ export default function Feuille({ profile, shops, isStaff }) {
 }
 
 // ======================= Saisie d'un magasin =======================
-function ShopSheet({ day, shopId, layout, isStaff }) {
+function ShopSheet({ day, shopId, layout, isStaff, shopName }) {
+  // La production consulte la feuille d'un magasin sans la modifier, avec le total en vert dans Prod.
+  const readOnly = isStaff
   const [lineOpen, setLineOpen] = useState(null)
+  const [prodTotals, setProdTotals] = useState({})
+  const [tick, setTick] = useState(0)
   const narrow = useNarrow()
   const [sizeSel, setSizeSel] = useState({})
   const [entries, setEntries] = useState(null)
@@ -115,17 +120,32 @@ function ShopSheet({ day, shopId, layout, isStaff }) {
 
   useEffect(() => {
     let alive = true
+    let rowsReq = supabase.from('sheet_entries').select('*').eq('day', day)
+    if (!readOnly) rowsReq = rowsReq.eq('shop_id', shopId)
     Promise.all([
-      q(supabase.from('sheet_entries').select('*').eq('shop_id', shopId).eq('day', day)),
+      q(rowsReq),
       q(supabase.from('sheet_notes').select('*').eq('shop_id', shopId).eq('day', day).maybeSingle()),
     ]).then(([rows, n]) => {
       if (!alive) return
-      const map = {}
-      for (const r of rows) map[keyOf(r.line_id, r.size)] = r
-      ref.current = map; setEntries(map); setNotes(n?.notes || '')
+      const map = {}, tot = {}
+      for (const r of rows) {
+        const k = keyOf(r.line_id, r.size)
+        if (r.shop_id === shopId) map[k] = r
+        if (r.prod !== null && r.prod !== undefined) tot[k] = (tot[k] || 0) + Number(r.prod)
+      }
+      ref.current = map; setEntries(map); setProdTotals(tot); setNotes(n?.notes || '')
     }).catch(e => setError(e.message))
     return () => { alive = false }
-  }, [shopId, day])
+  }, [shopId, day, readOnly, tick])
+
+  // en lecture seule, les chiffres des magasins arrivent en direct
+  useEffect(() => {
+    if (!readOnly) return
+    const ch = supabase.channel('sheet-shop-' + Math.random())
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'sheet_entries' }, () => setTick(t => t + 1))
+      .subscribe()
+    return () => { supabase.removeChannel(ch) }
+  }, [readOnly])
 
   const save = useCallback(async (lineId, size, patch) => {
     const k = keyOf(lineId, size)
@@ -163,9 +183,13 @@ function ShopSheet({ day, shopId, layout, isStaff }) {
 
   return (
     <>
-      <div className={'save-state' + (error ? ' err' : '')} role="status">
+      {readOnly ? (
+        <div className="ro-info no-print">
+          <b>Lecture seule</b> — feuille remplie par {shopName}. Dans <b className="ko">Prod.</b>, le chiffre du magasin et, en <b className="tot-c">vert</b>, le total des magasins.
+        </div>
+      ) : <div className={'save-state' + (error ? ' err' : '')} role="status">
         {error ? error : pending ? 'Enregistrement…' : lastSaved ? `Tout est enregistré · ${fmtTime(lastSaved)}` : filled ? `${filled} ligne${filled > 1 ? 's' : ''} remplie${filled > 1 ? 's' : ''}` : 'Feuille vierge : touchez une case pour commencer'}
-      </div>
+      </div>}
       {layout.map(sec => {
         const sizes = sec.sizes?.length ? sec.sizes : ['']
         const shown = narrow && sizes.length > 1 ? [sizeSel[sec.id] || sizes[0]] : sizes
@@ -209,10 +233,21 @@ function ShopSheet({ day, shopId, layout, isStaff }) {
                           : FIELDS.map(([f], i) => {
                             const e = entries[keyOf(l.id, z)]
                             return (
-                              <td key={z + f} className={'f-' + f + (i === 0 ? ' gs' : '')}>
-                                <Cell value={e?.[f]} col={sec.id + z + f} label={`${l.name} ${z} ${f}`}
-                                  fini={f === 'reste' && e?.fini}
-                                  onSave={v => save(l.id, z, { [f]: v })} onEnter={next} />
+                              <td key={z + f} className={'f-' + f + (i === 0 ? ' gs' : '') + (readOnly ? ' ro' : '')}>
+                                {readOnly ? (
+                                  <>
+                                    {f === 'reste' && e?.fini && (e?.reste === null || e?.reste === undefined)
+                                      ? <span className="ro-v fini-txt">fini</span>
+                                      : <span className={'ro-v' + (f === 'com' && e?.com ? ' circled' : '')}>{fmt(e?.[f])}</span>}
+                                    {f === 'prod' && prodTotals[keyOf(l.id, z)] !== undefined && (
+                                      <small className="tot" title="Total des magasins">{fmt(prodTotals[keyOf(l.id, z)])}</small>
+                                    )}
+                                  </>
+                                ) : (
+                                  <Cell value={e?.[f]} col={sec.id + z + f} label={`${l.name} ${z} ${f}`}
+                                    fini={f === 'reste' && e?.fini}
+                                    onSave={v => save(l.id, z, { [f]: v })} onEnter={next} />
+                                )}
                               </td>
                             )
                           }))}
@@ -230,12 +265,14 @@ function ShopSheet({ day, shopId, layout, isStaff }) {
           onChange={(z, patch) => save(lineOpen.line.id, z, patch)} onClose={() => setLineOpen(null)} />
       )}
       <p className="muted small-text no-print" style={{ margin: '-8px 0 14px' }}>
-        Touchez le nom d’un produit pour le marquer <b className="ko">fini</b> (épuisé){isStaff ? ' ou ✓ préparé' : ''}.
+        {readOnly ? <>Touchez le nom d’un produit pour le cocher ✓ préparé.</> : <>Touchez le nom d’un produit pour le marquer <b className="ko">fini</b> (épuisé).</>}
       </p>
       <section className="sheet-sec">
         <div className="sheet-sec-head"><h2>Remarques</h2></div>
-        <textarea className="sheet-notes" value={notes} onChange={e => setNotes(e.target.value)} onBlur={e => saveNotes(e.target.value)}
-          placeholder="Ex. : Tourisme 38 baisers, 38 MB · Château 15 croissants, 10 p. choco…" rows={4} />
+        {readOnly
+          ? <div className="note-card"><p className={notes ? '' : 'muted'}>{notes || 'Aucune remarque.'}</p></div>
+          : <textarea className="sheet-notes" value={notes} onChange={e => setNotes(e.target.value)} onBlur={e => saveNotes(e.target.value)}
+              placeholder="Ex. : Tourisme 38 baisers, 38 MB · Château 15 croissants, 10 p. choco…" rows={4} />}
       </section>
     </>
   )
@@ -270,9 +307,11 @@ function LineSheet({ line, sizes, entries, isStaff, onChange, onClose }) {
           return (
             <div key={z} className="line-flags">
               {z && <b className="lf-size">{z}</b>}
-              <button type="button" className={'flag' + (e.fini ? ' on-fini' : '')} aria-pressed={e.fini} onClick={() => onChange(z, { fini: !e.fini })}>
-                {e.fini ? '✓ ' : ''}Fini (épuisé)
-              </button>
+              {isStaff
+                ? e.fini && <span className="mk ko">fini (épuisé)</span>
+                : <button type="button" className={'flag' + (e.fini ? ' on-fini' : '')} aria-pressed={e.fini} onClick={() => onChange(z, { fini: !e.fini })}>
+                    {e.fini ? '✓ ' : ''}Fini (épuisé)
+                  </button>}
               {isStaff
                 ? <button type="button" className={'flag' + (e.checked ? ' on-ok' : '')} aria-pressed={e.checked} onClick={() => onChange(z, { checked: !e.checked })}>
                     {e.checked ? '✓ Préparé' : 'Marquer préparé'}
