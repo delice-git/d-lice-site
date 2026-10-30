@@ -15,14 +15,16 @@ import ProductStock from './ProductStock'
 import ShopStock from './ShopStock'
 import Allergens from './Allergens'
 import Users from './Users'
+import Feuille from './Feuille'
 import logo from './logo.png'
 
 // [clé, libellé, libellé court, icône, page, dans la barre du bas sur téléphone]
 const STAFF_TABS = [
   ['dashboard', 'Tableau de bord', 'Accueil', 'home', Dashboard, true],
+  ['sheet', 'Feuille du jour', 'Feuille', 'clipboard', Feuille, true],
   ['orders', 'Commandes', 'Commandes', 'orders', Orders, true],
   ['recipes', 'Recettes', 'Recettes', 'book', Recipes, true],
-  ['agenda', 'Agenda', 'Agenda', 'calendar', Agenda, true],
+  ['agenda', 'Agenda', 'Agenda', 'calendar', Agenda, false],
   ['products', 'Stock produits', 'Produits', 'bread', ProductStock, false],
   ['articles', 'Stock matières', 'Matières', 'box', Articles, false],
   ['shops', 'Stocks magasins', 'Magasins', 'store', ShopStock, false],
@@ -30,6 +32,7 @@ const STAFF_TABS = [
   ['users', 'Comptes & magasins', 'Comptes', 'users', Users, false],
 ]
 const SHOP_TABS = [
+  ['sheet', 'Feuille du jour', 'Feuille', 'clipboard', Feuille, true],
   ['shop', 'Mon stock', 'Stock', 'box', ShopStock, true],
   ['orders', 'Commandes', 'Commandes', 'orders', Orders, true],
   ['allergens', 'Allergènes', 'Allergènes', 'leaf', Allergens, true],
