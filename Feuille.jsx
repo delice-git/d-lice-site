@@ -36,7 +36,14 @@ async function loadLayout() {
     q(supabase.from('sheet_sections').select('*').order('position').order('name')),
     q(supabase.from('sheet_lines').select('*').eq('active', true).order('position').order('name')),
   ])
-  return sections.map(s => ({ ...s, lines: lines.filter(l => l.section_id === s.id) }))
+  return sections.map(s => {
+    const own = lines.filter(l => l.section_id === s.id)
+    // une ligne « en bacs » (ex. Sandwich) se remplit sur deux rangées : bac et ½ bac
+    const rows = own.flatMap(l => (l.bac_units && !(s.sizes || []).length
+      ? [{ ...l, _size: 'bac', rowKey: l.id + 'bac', label: 'bac' }, { ...l, _size: 'demi', rowKey: l.id + 'demi', label: '½ bac' }]
+      : [{ ...l, rowKey: l.id }]))
+    return { ...s, lines: own, rows }
+  })
 }
 
 // Initiale unique pour chaque magasin (B = Ben-Ahin, T = Tihange)
@@ -218,20 +225,21 @@ function ShopSheet({ day, shopId, layout, isStaff, shopName }) {
                   </tr>
                 </thead>
                 <tbody>
-                  {sec.lines.map(l => {
-                    const rows = sizes.map(z => entries[keyOf(l.id, z)]).filter(Boolean)
+                  {sec.rows.map(l => {
+                    const lineSizes = l._size ? [l._size] : sizes
+                    const rows = lineSizes.map(z => entries[keyOf(l.id, l._size ?? z)]).filter(Boolean)
                     return (
-                      <tr key={l.id}>
+                      <tr key={l.rowKey} className={l._size === 'demi' ? 'bac-half' : l._size ? 'bac-full' : ''}>
                         <th scope="row" className="nm">
-                          <button className="nm-btn" onClick={() => setLineOpen({ line: l, sizes })} title="Fini, préparé…">
-                            {l.name}
+                          <button className="nm-btn" onClick={() => setLineOpen({ line: l, sizes: lineSizes })} title="Fini, préparé…">
+                            {l._size === 'demi' ? <span className="bac-sub">½ bac</span> : <>{l.name}{l.label && <span className="bac-tag">{l.label}</span>}</>}
                             {rows.some(r => r.checked) && <span className="mk ok" title="Préparé">✓</span>}
                           </button>
                         </th>
                         {shown.map(z => isOff(l, z)
                           ? <td key={z} colSpan={4} className="off gs" title={`Pas en ${z}`} />
                           : FIELDS.map(([f], i) => {
-                            const e = entries[keyOf(l.id, z)]
+                            const e = entries[keyOf(l.id, l._size ?? z)]
                             return (
                               <td key={z + f} className={'f-' + f + (i === 0 ? ' gs' : '') + (readOnly ? ' ro' : '')}>
                                 {readOnly ? (
@@ -239,14 +247,14 @@ function ShopSheet({ day, shopId, layout, isStaff, shopName }) {
                                     {f === 'reste' && e?.fini && (e?.reste === null || e?.reste === undefined)
                                       ? <span className="ro-v fini-txt">fini</span>
                                       : <span className={'ro-v' + (f === 'com' && e?.com ? ' circled' : '')}>{fmt(e?.[f])}</span>}
-                                    {f === 'prod' && prodTotals[keyOf(l.id, z)] !== undefined && (
-                                      <small className="tot" title="Total des magasins">{fmt(prodTotals[keyOf(l.id, z)])}</small>
+                                    {f === 'prod' && prodTotals[keyOf(l.id, l._size ?? z)] !== undefined && (
+                                      <small className="tot" title="Total des magasins">{fmt(prodTotals[keyOf(l.id, l._size ?? z)])}</small>
                                     )}
                                   </>
                                 ) : (
                                   <Cell value={e?.[f]} col={sec.id + z + f} label={`${l.name} ${z} ${f}`}
                                     fini={f === 'reste' && e?.fini}
-                                    onSave={v => save(l.id, z, { [f]: v })} onEnter={next} />
+                                    onSave={v => save(l.id, l._size ?? z, { [f]: v })} onEnter={next} />
                                 )}
                               </td>
                             )
@@ -306,7 +314,7 @@ function LineSheet({ line, sizes, entries, isStaff, onChange, onClose }) {
           const e = entries[keyOf(line.id, z)] || EMPTY
           return (
             <div key={z} className="line-flags">
-              {z && <b className="lf-size">{z}</b>}
+              {z && <b className="lf-size">{z === 'bac' ? 'Bac' : z === 'demi' ? '½ bac' : z}</b>}
               {isStaff
                 ? e.fini && <span className="mk ko">fini (épuisé)</span>
                 : <button type="button" className={'flag' + (e.fini ? ' on-fini' : '')} aria-pressed={e.fini} onClick={() => onChange(z, { fini: !e.fini })}>
@@ -394,7 +402,7 @@ function TotalSheet({ day, layout, shops }) {
       {layout.map(sec => {
         const sizes = sec.sizes?.length ? sec.sizes : ['']
         const shown = narrow && sizes.length > 1 ? [sizeSel[sec.id] || sizes[0]] : sizes
-        const lines = hideEmpty ? sec.lines.filter(l => sizes.some(z => cells[keyOf(l.id, z)]) || flags[l.id]) : sec.lines
+        const lines = hideEmpty ? sec.rows.filter(l => (l._size ? [l._size] : sizes).some(z => cells[keyOf(l.id, z)]) || (!l._size && flags[l.id])) : sec.rows
         if (!lines.length) return null
         return (
           <section key={sec.id} className="sheet-sec">
@@ -417,10 +425,10 @@ function TotalSheet({ day, layout, shops }) {
                 </thead>
                 <tbody>
                   {lines.map(l => (
-                    <tr key={l.id}>
+                    <tr key={l.rowKey}>
                       <th scope="row" className="nm">
-                        {l.name}
-                        {flags[l.id] && (
+                        {l.name}{l.label && <span className="bac-tag">{l.label}</span>}
+                        {flags[l.id] && l._size !== 'demi' && (
                           <span className="flags">
                             {Object.keys(flags[l.id].checked).map(id => <span key={'c' + id} className="mk ok">✓ {short[id]}</span>)}
                             {Object.entries(flags[l.id].fini).map(([id, zs]) => (
@@ -430,7 +438,7 @@ function TotalSheet({ day, layout, shops }) {
                         )}
                       </th>
                       {shown.map(z => isOff(l, z) ? <td key={z} colSpan={4} className="off gs" /> : FIELDS.map(([f], i) => {
-                        const c = cells[keyOf(l.id, z)]?.[f]
+                        const c = cells[keyOf(l.id, l._size ?? z)]?.[f]
                         return (
                           <td key={z + f} className={'tc f-' + f + (i === 0 ? ' gs' : '')}>
                             {c && (
@@ -464,7 +472,7 @@ function TotalSheet({ day, layout, shops }) {
           ))}
         </section>
       )}
-      {hideEmpty && !layout.some(sec => sec.lines.some(l => (sec.sizes?.length ? sec.sizes : ['']).some(z => cells[keyOf(l.id, z)]))) && (
+      {hideEmpty && !layout.some(sec => sec.rows.some(l => (l._size ? [l._size] : sec.sizes?.length ? sec.sizes : ['']).some(z => cells[keyOf(l.id, z)]))) && (
         <Empty>Aucun magasin n’a encore rempli la feuille de ce jour.</Empty>
       )}
     </>
@@ -497,7 +505,7 @@ function SheetEditor({ layout, onClose, reload }) {
   return (
     <Modal title="Modifier la liste de la feuille" onClose={onClose} wide>
       <div className="stack">
-        <p className="muted small-text">Les changements sont enregistrés tout de suite et valent pour les deux magasins. Retirer une ligne ne supprime pas les chiffres déjà saisis les jours précédents. Pour les tartes, touchez une taille barrée/non barrée pour indiquer qu’un produit n’existe pas dans cette taille.</p>
+        <p className="muted small-text">Les changements sont enregistrés tout de suite et valent pour les deux magasins. Retirer une ligne ne supprime pas les chiffres déjà saisis les jours précédents. Pour les tartes, touchez une taille pour indiquer qu’un produit n’existe pas dans cette taille. « Bac / ½ » : la ligne se remplit en bac et en ½ bac (ex. sandwichs).</p>
         {layout.map(sec => (
           <div key={sec.id} className="panel stack" style={{ gap: 10, background: 'var(--surface-2)' }}>
             <div className="grid-2">
@@ -514,6 +522,13 @@ function SheetEditor({ layout, onClose, reload }) {
                 <div key={l.id} className="edit-line">
                   <input defaultValue={l.name} aria-label="Nom de la ligne"
                     onBlur={e => e.target.value.trim() && e.target.value !== l.name && run(supabase.from('sheet_lines').update({ name: e.target.value.trim() }).eq('id', l.id))} />
+                  {!(sec.sizes || []).length && (
+                    <button type="button" className={'small bac-toggle' + (l.bac_units ? ' on' : '')} aria-pressed={!!l.bac_units}
+                      title="Se remplit en bac et en ½ bac"
+                      onClick={() => run(supabase.from('sheet_lines').update({ bac_units: !l.bac_units }).eq('id', l.id), l.bac_units ? 'Ligne normale' : 'Ligne en bac / ½ bac')}>
+                      {l.bac_units ? '✓ Bac / ½' : 'Bac / ½'}
+                    </button>
+                  )}
                   {(sec.sizes || []).length > 1 && (
                     <span className="off-pick" title="Touchez une taille pour la rendre indisponible (pointillés)">
                       {sec.sizes.map(z => {

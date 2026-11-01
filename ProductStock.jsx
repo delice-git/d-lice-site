@@ -5,35 +5,46 @@ import { eur, fmtDateTime, num, toNumber } from './format'
 import { Empty, ErrorBox, Field, Loading, Modal, PageHeader, QtyCell, SearchBox } from './ui'
 import { Icon } from './icons'
 import { notify } from './Toast'
-import { productName } from './catalogue'
+import { productName, groupByCategory, loadCategories, fmtOf, formatLabel } from './catalogue'
+import { CategoryBar, CategoryManager, CategorySelect, FormatPicker, useCatFilter } from './categories'
 
-const CATEGORIES = ['Pain', 'Viennoiserie', 'Pâtisserie', 'Snacking', 'Gâteau', 'Boisson', 'Autre']
+// Ajoute une catégorie tapée à la main à la liste (si la table existe)
+async function ensureCategory(name, categories) {
+  if (!name || categories.some(c => c.name === name)) return
+  await supabase.from('categories').upsert({ name, position: categories.length + 1 }, { onConflict: 'name', ignoreDuplicates: true })
+}
 
 export default function ProductStock() {
   const [producing, setProducing] = useState(null)
-  const [adding, setAdding] = useState(false)
+  const [editing, setEditing] = useState(null) // produit | {} pour un nouveau
+  const [managing, setManaging] = useState(false)
   const [search, setSearch] = useState('')
+  const filter = useCatFilter('stock-produits')
   const data = useData(async () => {
-    const [recipes, stock, orders, batches, items] = await Promise.all([
-      q(supabase.from('recipes').select('id, name, category, yield_qty, sale_price, active, servings').eq('active', true).order('category').order('name')),
+    const [recipes, stock, orders, batches, items, categories] = await Promise.all([
+      q(supabase.from('recipes').select('*').eq('active', true).order('name')),
       q(supabase.from('production_stock').select('*')),
       q(supabase.from('orders').select('id, order_items(recipe_id, quantity)').in('status', ['en_attente', 'en_production', 'prete'])),
       q(supabase.from('production_batches').select('*').order('created_at', { ascending: false }).limit(25)),
       q(supabase.from('recipe_items').select('recipe_id')),
+      loadCategories(),
     ])
     const reserved = {}
-    for (const o of orders) for (const it of o.order_items) reserved[it.recipe_id] = (reserved[it.recipe_id] || 0) + Number(it.quantity)
+    for (const o of orders) for (const it of o.order_items || []) if (it.recipe_id) reserved[it.recipe_id] = (reserved[it.recipe_id] || 0) + Number(it.quantity)
     const withRecipe = new Set(items.map(i => i.recipe_id))
-    return { recipes, stock: Object.fromEntries(stock.map(s => [s.recipe_id, Number(s.qty)])), reserved, batches, withRecipe }
+    return { recipes, stock: Object.fromEntries(stock.map(s => [s.recipe_id, Number(s.qty)])), reserved, batches, withRecipe, categories }
   }, [])
 
   const rows = useMemo(() => {
     const s = search.trim().toLowerCase()
-    return (data.data?.recipes || []).filter(r => !s || r.name.toLowerCase().includes(s)).map(r => {
+    return (data.data?.recipes || []).filter(r => !s || productName(r).toLowerCase().includes(s) || (r.category || '').toLowerCase().includes(s)).map(r => {
       const qty = data.data.stock[r.id] || 0, reserved = data.data.reserved[r.id] || 0
       return { r, qty, reserved, free: qty - reserved, hasRecipe: data.data.withRecipe.has(r.id) }
     })
   }, [data.data, search])
+  const allGroups = useMemo(() => groupByCategory(rows.filter(x => !filter.format || (fmtOf(x.r) || 'piece') === filter.format), x => x.r.category, data.data?.categories), [rows, filter.format, data.data])
+  const groups = allGroups.filter(g => !filter.cat || g.name === filter.cat)
+  const formats = [...new Set(rows.map(x => fmtOf(x.r) || 'piece'))]
 
   async function adjust(recipeId, delta) {
     try {
@@ -43,51 +54,58 @@ export default function ProductStock() {
   }
 
   if (data.loading && !data.data) return <Loading />
-  let lastCat = null
 
   return (
     <>
-      <PageHeader title="Stock produits" subtitle="Produits finis à l’atelier. Tapez directement la quantité, ou utilisez − et +.">
-        <button className="primary" onClick={() => setAdding(true)}><Icon name="plus" size={20} />Nouveau produit</button>
+      <PageHeader title="Stock produits" subtitle="Produits finis à l’atelier. Touchez un nom pour tout modifier (nom, catégorie, format, prix, quantité) ou le supprimer.">
+        <button className="primary" onClick={() => setEditing({})}><Icon name="plus" size={20} />Nouveau produit</button>
         <button onClick={() => setProducing({})}>Produire depuis une recette</button>
       </PageHeader>
       <ErrorBox error={data.error} />
       <div className="toolbar"><SearchBox value={search} onChange={setSearch} placeholder="Rechercher un produit…" /></div>
+      <CategoryBar groups={allGroups} value={filter.cat} onChange={filter.setCat}
+        formats={formats} format={filter.format} onFormat={filter.setFormat} onManage={() => setManaging(true)} />
 
-      {!rows.length ? <Empty>Aucun produit. Ajoutez-en avec « Nouveau produit », pas besoin de recette.</Empty> : (
+      {!groups.length ? <Empty>{rows.length ? 'Aucun produit pour ce filtre.' : 'Aucun produit. Ajoutez-en avec « Nouveau produit », pas besoin de recette.'}</Empty> : (
         <div className="table-wrap stock">
           <table className="stock-table">
             <thead>
               <tr>
                 <th>Produit</th>
                 <th className="c">En stock</th>
-                <th className="r">Réservé</th>
-                <th className="r">Disponible</th>
-                <th className="hide-sm"></th>
+                <th className="r hide-sm">Réservé</th>
+                <th className="r">Dispo.</th>
+                <th className="r"></th>
               </tr>
             </thead>
             <tbody>
-              {rows.flatMap(({ r, qty, reserved, free, hasRecipe }) => {
-                const out = []
-                if (r.category !== lastCat) { lastCat = r.category; out.push(<tr key={'g' + r.id} className="grp"><td colSpan={5}>{r.category || 'Sans catégorie'}</td></tr>) }
-                out.push(
+              {groups.flatMap(g => [
+                <tr key={'g' + g.name} className="grp"><td colSpan={5}>{g.label} <span className="muted small-text">· {g.items.length}</span></td></tr>,
+                ...g.items.map(({ r, qty, reserved, free, hasRecipe }) => (
                   <tr key={r.id} className={free < 0 ? 'out' : ''}>
-                    <td><b>{productName(r)}</b>{!hasRecipe && <span className="sub">sans recette</span>}</td>
-                    <td className="c">
-                      <QtyCell value={qty} label={r.name} onStep={d => adjust(r.id, d)} onSet={n => adjust(r.id, n - qty)} />
+                    <td>
+                      <button className="name" onClick={() => setEditing({ ...r, qty })}>{r.name}</button>
+                      <span className="sub">
+                        {formatLabel(r) && <span className="badge" style={{ marginRight: 6 }}>{formatLabel(r)}</span>}
+                        {Number(r.sale_price) ? eur(r.sale_price) : ''}{!hasRecipe ? `${Number(r.sale_price) ? ' · ' : ''}sans recette` : ''}
+                      </span>
                     </td>
-                    <td className="r">{reserved ? num(reserved) : '—'}</td>
+                    <td className="c">
+                      <QtyCell value={qty} label={productName(r)} onStep={d => adjust(r.id, d)} onSet={n => adjust(r.id, n - qty)} />
+                    </td>
+                    <td className="r hide-sm">{reserved ? num(reserved) : '—'}</td>
                     <td className="r">{free < 0 ? <span className="state-ko">{num(free)}</span> : <b>{num(free)}</b>}</td>
-                    <td className="r hide-sm">{hasRecipe && <button className="small ghost" onClick={() => setProducing({ recipe: r })}>Produire</button>}</td>
+                    <td className="r">
+                      <button className="small ghost" onClick={() => setEditing({ ...r, qty })} aria-label={`Modifier ${productName(r)}`}>Modifier</button>
+                    </td>
                   </tr>
-                )
-                return out
-              })}
+                )),
+              ])}
             </tbody>
           </table>
         </div>
       )}
-      <p className="muted small-text" style={{ marginTop: 10 }}>Réservé = quantités demandées dans les commandes en cours. Disponible = en stock − réservé.</p>
+      <p className="muted small-text" style={{ marginTop: 10 }}>Réservé = quantités demandées dans les commandes en cours. Dispo. = en stock − réservé.</p>
 
       <h2 style={{ margin: '26px 0 10px' }}>Dernières productions</h2>
       {!data.data.batches.length ? <p className="muted">Aucune production enregistrée depuis une recette.</p> : (
@@ -108,59 +126,87 @@ export default function ProductStock() {
         </div>
       )}
 
-      {adding && <NewProduct categories={[...new Set([...CATEGORIES, ...data.data.recipes.map(r => r.category).filter(Boolean)])]}
-        onClose={() => setAdding(false)} onDone={() => { setAdding(false); data.reload() }} />}
+      {editing && <ProductForm product={editing} categories={data.data.categories} defaultCat={filter.cat}
+        onClose={() => setEditing(null)} onDone={() => { setEditing(null); data.reload() }} />}
+      {managing && <CategoryManager categories={data.data.categories} onClose={() => setManaging(false)} reload={data.reload} />}
       {producing && <ProduceSheet recipes={data.data.recipes.filter(r => data.data.withRecipe.has(r.id))} initial={producing.recipe}
         onClose={() => setProducing(null)} onDone={() => { setProducing(null); data.reload() }} />}
     </>
   )
 }
 
-// Produit sans recette : juste un nom, une catégorie et une quantité
-function NewProduct({ categories, onClose, onDone }) {
-  const [f, setF] = useState({ name: '', category: 'Pain', price: '', qty: '', servings: '' })
+// Créer ou modifier un produit : tout se change ici, y compris la suppression
+function ProductForm({ product, categories, defaultCat, onClose, onDone }) {
+  const isNew = !product.id
+  const [f, setF] = useState({
+    name: product.name || '', category: product.category ?? defaultCat ?? categories[0]?.name ?? null,
+    sale_price: product.sale_price ? String(Number(product.sale_price)) : '', qty: String(product.qty ?? ''),
+    format: fmtOf(product), servings: product.servings || null, bac_size: product.bac_size || null,
+  })
   const [error, setError] = useState(null)
   const [busy, setBusy] = useState(false)
   const set = p => setF(x => ({ ...x, ...p }))
+
   async function submit(e) {
     e.preventDefault()
     if (!f.name.trim()) return setError('Donnez un nom au produit.')
     setBusy(true); setError(null)
+    const fields = {
+      name: f.name.trim(), category: f.category || null, sale_price: toNumber(f.sale_price),
+      format: f.format || null, servings: f.format === 'gateau' || f.format === 'cadre' ? f.servings : null,
+      bac_size: f.format === 'bac' ? f.bac_size || 'entier' : null,
+    }
     try {
-      const id = await q(supabase.rpc('save_recipe', {
-        p_id: null,
-        p_recipe: { name: f.name.trim(), category: f.category, yield_qty: 1, servings: Number(f.servings) || null, sale_price: toNumber(f.price), extra_allergens: [], traces: [], active: true },
-        p_items: [],
-      }))
-      if (toNumber(f.qty)) await q(supabase.rpc('adjust_product_stock', { p_recipe: id, p_delta: toNumber(f.qty) }))
-      notify(`${f.name.trim()} ajouté au stock`); onDone()
+      await ensureCategory(fields.category, categories)
+      let id = product.id
+      if (isNew) {
+        id = await q(supabase.rpc('save_recipe', { p_id: null, p_recipe: { ...fields, yield_qty: 1, extra_allergens: [], traces: [], active: true }, p_items: [] }))
+      } else {
+        await q(supabase.from('recipes').update(fields).eq('id', id))
+      }
+      const target = toNumber(f.qty), before = isNew ? 0 : Number(product.qty || 0)
+      if (f.qty !== '' && target !== before) await q(supabase.rpc('adjust_product_stock', { p_recipe: id, p_delta: target - before }))
+      notify(isNew ? `${fields.name} ajouté` : 'Produit enregistré'); onDone()
+    } catch (err) {
+      setError(/column .*(format|bac_size)/i.test(err.message) ? 'Lancez d’abord la mise à jour SQL « formats-categories » dans Supabase.' : err.message)
+    } finally { setBusy(false) }
+  }
+
+  async function remove() {
+    if (!confirm(`Supprimer « ${productName(product)} » ?\nS’il a déjà été commandé, il sera retiré mais gardé dans l’historique des commandes.`)) return
+    setBusy(true)
+    try {
+      let res
+      try { res = await q(supabase.rpc('delete_product', { p_id: product.id })) }
+      catch { await q(supabase.from('recipes').update({ active: false }).eq('id', product.id)); res = 'archive' }
+      notify(res === 'supprime' ? 'Produit supprimé' : 'Produit retiré (gardé dans l’historique des commandes)'); onDone()
     } catch (err) { setError(err.message) } finally { setBusy(false) }
   }
+
   return (
-    <Modal title="Nouveau produit" onClose={onClose}>
+    <Modal title={isNew ? 'Nouveau produit' : productName(product)} onClose={onClose} wide>
       <form className="stack" onSubmit={submit}>
         <ErrorBox error={error} />
-        <p className="muted small-text">Pas besoin de recette. Le produit pourra être commandé par les magasins. Vous pourrez ajouter sa recette et ses allergènes plus tard dans « Recettes ».</p>
-        <Field label="Nom"><input autoFocus value={f.name} onChange={e => set({ name: e.target.value })} placeholder="Ex. : Tarte au riz" /></Field>
+        {isNew && <p className="muted small-text">Pas besoin de recette : le produit peut tout de suite être commandé par les magasins. Sa recette et ses allergènes s’ajoutent plus tard dans « Recettes ».</p>}
         <div className="grid-2">
-          <Field label="Catégorie">
-            <input list="prod-cats" value={f.category} onChange={e => set({ category: e.target.value })} />
-            <datalist id="prod-cats">{categories.map(c => <option key={c} value={c} />)}</datalist>
-          </Field>
-          <Field label="Prix de vente (€, facultatif)"><input inputMode="decimal" value={f.price} onChange={e => set({ price: e.target.value })} /></Field>
+          <Field label="Nom"><input autoFocus={isNew} value={f.name} onChange={e => set({ name: e.target.value })} placeholder="Ex. : Tarte au riz" /></Field>
+          <Field label="Catégorie"><CategorySelect value={f.category} onChange={v => set({ category: v })} categories={categories} /></Field>
         </div>
-        <Field label="Taille">
-          <select value={f.servings} onChange={e => set({ servings: e.target.value })}>
-            <option value="">À la pièce</option>
-            <option value="4">Gâteau 4 personnes</option>
-            <option value="6">Gâteau 6 personnes</option>
-            <option value="8">Gâteau 8 personnes</option>
-          </select>
-        </Field>
-        <Field label="Quantité en stock"><input inputMode="decimal" value={f.qty} onChange={e => set({ qty: e.target.value })} placeholder="0" /></Field>
-        <div className="row end">
+        <div className="field">
+          <span>Format</span>
+          <FormatPicker value={f} onChange={p => set(p)} />
+        </div>
+        <div className="grid-2">
+          <Field label="Quantité en stock" hint={isNew ? '' : 'Tapez la quantité réelle : le stock est corrigé.'}>
+            <input inputMode="decimal" value={f.qty} onChange={e => set({ qty: e.target.value })} placeholder="0" />
+          </Field>
+          <Field label="Prix de vente TTC (€, facultatif)"><input inputMode="decimal" value={f.sale_price} onChange={e => set({ sale_price: e.target.value })} /></Field>
+        </div>
+        <div className="row">
+          {!isNew && <button type="button" className="danger" onClick={remove} disabled={busy}>Supprimer</button>}
+          <span className="spacer" />
           <button type="button" onClick={onClose}>Annuler</button>
-          <button className="primary" disabled={busy}>Ajouter le produit</button>
+          <button className="primary" disabled={busy}>{isNew ? 'Ajouter le produit' : 'Enregistrer'}</button>
         </div>
       </form>
     </Modal>

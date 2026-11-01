@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { supabase } from './supabase'
 import { q, useData } from './useData'
-import { loadCatalogue, allergensOf, productName } from './catalogue'
+import { loadCatalogue, allergensOf, productName, fmtOf } from './catalogue'
 import { addDaysISO, fmtDate, num, todayISO, toNumber } from './format'
 import { AllergenBadges } from './AllergenBadges'
 import { Empty, ErrorBox, Field, KindBadge, Loading, Modal, PageHeader, Seg, StatusBadge, STATUS } from './ui'
@@ -18,7 +18,7 @@ export default function Orders({ profile, shops, isStaff }) {
   const cat = useData(loadCatalogue, [])
 
   const orders = useData(async () => {
-    let req = supabase.from('orders').select('*, shops(name), order_items(id, recipe_id, label, quantity)')
+    let req = supabase.from('orders').select('*, shops(name), order_items(id, recipe_id, label, quantity, unit)')
     req = view === 'actives'
       ? req.in('status', ACTIVE).order('due_date').order('id')
       : req.in('status', ['livree', 'annulee']).order('due_date', { ascending: false }).order('id', { ascending: false }).limit(150)
@@ -45,7 +45,7 @@ export default function Orders({ profile, shops, isStaff }) {
     if (!isStaff || view !== 'actives' || !orders.data || !cat.data || !prodStock.data) return []
     const tot = {}, free = {}
     for (const o of orders.data) for (const it of o.order_items) {
-      if (it.recipe_id) tot[it.recipe_id] = (tot[it.recipe_id] || 0) + Number(it.quantity)
+      if (it.recipe_id) tot[it.recipe_id] = (tot[it.recipe_id] || 0) + Number(it.quantity) * (it.unit === 'demi' ? 0.5 : 1)
       else free[it.label] = (free[it.label] || 0) + Number(it.quantity)
     }
     const freeRows = Object.entries(free).map(([label, ordered]) => ({ id: 'free:' + label, name: label, free: true, ordered }))
@@ -151,7 +151,7 @@ export default function Orders({ profile, shops, isStaff }) {
               </div>
               <ul className="order-items">
                 {o.order_items.map(it => (
-                  <li key={it.id}><span>{it.recipe_id ? (productName(recipeById[it.recipe_id]) || 'Produit supprimé') : <>{it.label} <span className="badge" style={{ marginLeft: 4 }}>libre</span></>}</span><b>× {num(it.quantity)}</b></li>
+                  <li key={it.id}><span>{it.recipe_id ? (productName(recipeById[it.recipe_id]) || 'Produit supprimé') : <>{it.label} <span className="badge" style={{ marginLeft: 4 }}>libre</span></>}</span><b>× {num(it.quantity)}{it.unit === 'demi' ? ' ½ bac' : it.unit === 'bac' ? ' bac' : ''}</b></li>
                 ))}
               </ul>
               {o.notes && <p className="muted small-text">{o.notes}</p>}
@@ -197,7 +197,7 @@ function OrderForm({ profile, shops, isStaff, cat, onClose, onSaved }) {
     e.preventDefault()
     const items = lines
       .filter(l => toNumber(l.quantity) > 0 && (l.free ? l.label.trim() : l.recipe_id))
-      .map(l => (l.free ? { label: l.label.trim(), quantity: toNumber(l.quantity) } : { recipe_id: l.recipe_id, quantity: toNumber(l.quantity) }))
+      .map(l => (l.free ? { label: l.label.trim(), quantity: toNumber(l.quantity) } : { recipe_id: l.recipe_id, quantity: toNumber(l.quantity), unit: l.unit || null }))
     if (!items.length) return setError('Ajoutez au moins un produit (ou un article libre) avec une quantité.')
     if (kind === 'client' && !customer.name.trim()) return setError('Indiquez le nom du client.')
     setBusy(true); setError(null)
@@ -246,15 +246,27 @@ function OrderForm({ profile, shops, isStaff, cat, onClose, onSaved }) {
                     <input className="free-text" autoFocus value={l.label} onChange={e => setLine(i, { label: e.target.value })} placeholder="Article libre, ex. : gâteau 3 étages chocolat" aria-label="Article libre" />
                   ) : (
                     <select value={l.recipe_id} aria-label="Produit"
-                      onChange={e => e.target.value === '__free' ? setLine(i, { free: true, recipe_id: '' }) : setLine(i, { recipe_id: e.target.value })}>
+                      onChange={e => {
+                        if (e.target.value === '__free') return setLine(i, { free: true, recipe_id: '', unit: null })
+                        const nr = recipes.find(x => x.id === e.target.value)
+                        setLine(i, { recipe_id: e.target.value, unit: fmtOf(nr) === 'bac' ? (nr.bac_size === 'demi' ? 'demi' : 'bac') : null })
+                      }}>
                       <option value="">Choisir…</option>
-                      {recipes.map(x => <option key={x.id} value={x.id}>{productName(x)}</option>)}
+                      {recipes.map(x => <option key={x.id} value={x.id}>{fmtOf(x) === 'bac' ? `${x.name} — en bac` : productName(x)}</option>)}
                       <option value="__free">✎ Autre (texte libre)…</option>
                     </select>
                   )}
                   <input className="qty" style={{ width: 80 }} inputMode="decimal" placeholder="Qté" value={l.quantity} onChange={e => setLine(i, { quantity: e.target.value })} aria-label="Quantité" />
                   <button type="button" className="ghost icon" aria-label="Retirer la ligne" disabled={lines.length === 1}
                     onClick={() => setLines(ls => ls.filter((_, j) => j !== i))}><Icon name="close" size={20} /></button>
+                  {!l.free && r && fmtOf(r) === 'bac' && (
+                    <span className="unit-pick">
+                      <span className="unit-seg" role="radiogroup" aria-label="Bac ou demi-bac">
+                        <button type="button" role="radio" aria-checked={l.unit !== 'demi'} className={l.unit !== 'demi' ? 'on' : ''} onClick={() => setLine(i, { unit: 'bac' })}>Bac</button>
+                        <button type="button" role="radio" aria-checked={l.unit === 'demi'} className={l.unit === 'demi' ? 'on' : ''} onClick={() => setLine(i, { unit: 'demi' })}>Bac ½</button>
+                      </span>
+                    </span>
+                  )}
                   {!l.free && r && <AllergenBadges {...allergensOf(r, cat)} compact />}
                 </div>
               )

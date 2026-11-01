@@ -1,12 +1,15 @@
 import { Fragment, useMemo, useState } from 'react'
 import { useData } from './useData'
-import { loadCatalogue, allergensOf, productName } from './catalogue'
+import { loadCatalogue, allergensOf, productName, groupByCategory, fmtOf } from './catalogue'
+import { CategoryBar, CategoryManager, useCatFilter } from './categories'
 import { ALLERGENS } from './allergenList'
 import { AllergenBadges } from './AllergenBadges'
 import { Empty, ErrorBox, Loading, PageHeader, SearchBox } from './ui'
 import { Icon } from './icons'
 
-export default function Allergens() {
+export default function Allergens({ isStaff }) {
+  const filter = useCatFilter('allergenes')
+  const [managing, setManaging] = useState(false)
   const cat = useData(loadCatalogue, [])
   const [search, setSearch] = useState('')
   const [without, setWithout] = useState([])
@@ -16,10 +19,14 @@ export default function Allergens() {
     if (!cat.data) return []
     const s = search.trim().toLowerCase()
     return cat.data.recipes
-      .filter(r => r.active && (!s || r.name.toLowerCase().includes(s)))
+      .filter(r => r.active && (!s || productName(r).toLowerCase().includes(s)))
       .map(r => ({ r, alg: allergensOf(r, cat.data) }))
       .filter(({ alg }) => without.every(k => !alg.contains.includes(k) && !alg.traces.includes(k)))
   }, [cat.data, search, without])
+
+  const allGroups = useMemo(() => groupByCategory(rows.filter(x => !filter.format || (fmtOf(x.r) || 'piece') === filter.format), x => x.r.category, cat.data?.categories), [rows, filter.format, cat.data])
+  const groups = allGroups.filter(g => !filter.cat || g.name === filter.cat)
+  const formats = [...new Set(rows.map(x => fmtOf(x.r) || 'piece'))]
 
   if (cat.loading && !cat.data) return <Loading />
   const ingredients = r => (cat.data.itemsByRecipe[r.id] || []).map(it => cat.data.articlesById[it.article_id]?.name).filter(Boolean).join(', ') || 'non renseignés'
@@ -52,13 +59,16 @@ export default function Allergens() {
         </div>
       </div>
 
-      {!rows.length ? (
+      <CategoryBar groups={allGroups} value={filter.cat} onChange={filter.setCat}
+        formats={formats} format={filter.format} onFormat={filter.setFormat} onManage={isStaff ? () => setManaging(true) : null} />
+      {managing && <CategoryManager categories={cat.data.categories} onClose={() => setManaging(false)} reload={cat.reload} />}
+      {!groups.length ? (
         <Empty>{without.length ? 'Aucun produit ne convient à ces allergies (traces comprises).' : 'Aucune recette active.'}</Empty>
       ) : (
         <>
           {/* Téléphone : une fiche par produit */}
           <div className="list only-mobile">
-            {rows.map(({ r, alg }) => (
+            {groups.map(g => [<div key={'g' + g.name} className="list-group">{g.label}</div>, ...g.items.map(({ r, alg }) => (
               <div key={r.id} className="item" style={{ alignItems: 'flex-start' }}>
                 <button className="item-main tap" onClick={() => setOpen(open === r.id ? null : r.id)} aria-expanded={open === r.id}>
                   <span className="item-title">{productName(r)}</span>
@@ -66,7 +76,7 @@ export default function Allergens() {
                   {open === r.id && <span className="item-sub" style={{ marginTop: 4 }}>Ingrédients : {ingredients(r)}</span>}
                 </button>
               </div>
-            ))}
+            ))])}
           </div>
 
           {/* Ordinateur : tableau croisé */}
@@ -79,10 +89,12 @@ export default function Allergens() {
                 </tr>
               </thead>
               <tbody>
-                {rows.map(({ r, alg }) => (
+                {groups.map(g => (<Fragment key={'g' + g.name}>
+                  <tr className="grp-row-alg"><td colSpan={ALLERGENS.length + 1}>{g.label}</td></tr>
+                  {g.items.map(({ r, alg }) => (
                   <Fragment key={r.id}>
                     <tr className="clickable" onClick={() => setOpen(open === r.id ? null : r.id)} aria-expanded={open === r.id}>
-                      <td><b>{productName(r)}</b><br /><span className="muted small-text">{r.category}</span></td>
+                      <td><b>{productName(r)}</b></td>
                       {ALLERGENS.map(a => (
                         <td key={a.key} className="cell">
                           {alg.contains.includes(a.key) ? <span className="dot" title={`Contient : ${a.label}`} />
@@ -99,7 +111,8 @@ export default function Allergens() {
                       </td></tr>
                     )}
                   </Fragment>
-                ))}
+                  ))}
+                </Fragment>))}
               </tbody>
             </table>
           </div>

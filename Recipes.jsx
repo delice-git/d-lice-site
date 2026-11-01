@@ -1,7 +1,8 @@
 import { useMemo, useState } from 'react'
 import { supabase } from './supabase'
 import { q, useData } from './useData'
-import { loadCatalogue, allergensFromLines, lineCost, recipeCost, productName } from './catalogue'
+import { loadCatalogue, allergensFromLines, lineCost, recipeCost, productName, groupByCategory, formatLabel, fmtOf, unitWord, sizeUnits } from './catalogue'
+import { CategoryBar, CategoryManager, CategorySelect, FormatPicker, useCatFilter } from './categories'
 import { eur, num, subUnit, toNumber } from './format'
 import { ALLERGENS } from './allergenList'
 import { AllergenBadges } from './AllergenBadges'
@@ -9,19 +10,25 @@ import { Empty, ErrorBox, Field, Loading, Modal, PageHeader, SearchBox } from '.
 import { Icon } from './icons'
 import { notify } from './Toast'
 
-const CATEGORIES = ['Pain', 'Viennoiserie', 'Pâtisserie', 'Snacking', 'Gâteau', 'Autre']
 
 export default function Recipes() {
   const cat = useData(loadCatalogue, [])
   const [selected, setSelected] = useState(null) // id | 'new' | null
   const [search, setSearch] = useState('')
   const [archived, setArchived] = useState(false)
+  const [managing, setManaging] = useState(false)
+  const filter = useCatFilter('recettes')
 
-  const list = useMemo(() => {
+  // groupes pour la barre de filtres (recherche appliquée, catégorie non appliquée pour garder les compteurs)
+  const searched = useMemo(() => {
     if (!cat.data) return []
     const s = search.trim().toLowerCase()
-    return cat.data.recipes.filter(r => r.active !== archived && (!s || r.name.toLowerCase().includes(s) || (r.category || '').toLowerCase().includes(s)))
+    return cat.data.recipes.filter(r => r.active !== archived && (!s || productName(r).toLowerCase().includes(s) || (r.category || '').toLowerCase().includes(s)))
   }, [cat.data, search, archived])
+  const allGroups = useMemo(() => groupByCategory(searched.filter(r => !filter.format || (fmtOf(r) || 'piece') === filter.format), r => r.category, cat.data?.categories), [searched, filter.format, cat.data])
+  const groups = allGroups.filter(g => !filter.cat || g.name === filter.cat)
+  const formats = [...new Set(searched.map(r => fmtOf(r) || 'piece'))]
+  const count = groups.reduce((s, g) => s + g.items.length, 0)
 
   if (cat.loading && !cat.data) return <Loading />
   const recipe = selected && selected !== 'new' ? cat.data?.recipes.find(r => r.id === selected) : null
@@ -39,19 +46,25 @@ export default function Recipes() {
         <div className="list recipe-list">
           <div className="list-head">
             <SearchBox value={search} onChange={setSearch} placeholder="Rechercher une recette…" />
+            <CategoryBar groups={allGroups} value={filter.cat} onChange={filter.setCat}
+              formats={formats} format={filter.format} onFormat={filter.setFormat} onManage={() => setManaging(true)} />
             <label className="check small-text"><input type="checkbox" checked={archived} onChange={e => setArchived(e.target.checked)} />Voir les recettes archivées</label>
           </div>
           <div className="scroll">
-            {list.map(r => (
-              <button key={r.id} className={'item' + (selected === r.id ? ' active' : '')} onClick={() => open(r.id)}>
-                <span className="item-main">
-                  <span className="item-title">{r.name}{r.servings ? <span className="badge" style={{ marginLeft: 6 }}>{r.servings} pers.</span> : null}</span>
-                  <span className="item-sub">{r.category || 'Sans catégorie'}</span>
-                </span>
-                <span className="item-figure"><b style={{ fontSize: '1rem' }}>{eur(recipeCost(r, cat.data) / Number(r.yield_qty))}</b><span>{r.servings ? 'par gâteau' : 'par pièce'}</span></span>
-              </button>
+            {groups.map(g => (
+              <div key={g.name || '_'}>
+                <div className="list-group">{g.label} <span className="muted small-text">· {g.items.length}</span></div>
+                {g.items.map(r => (
+                  <button key={r.id} className={'item' + (selected === r.id ? ' active' : '')} onClick={() => open(r.id)}>
+                    <span className="item-main">
+                      <span className="item-title">{r.name}{formatLabel(r) && <span className="badge fmt-badge">{formatLabel(r)}</span>}</span>
+                    </span>
+                    <span className="item-figure"><b style={{ fontSize: '1rem' }}>{eur(recipeCost(r, cat.data) / Number(r.yield_qty))}</b><span>par {unitWord(r)}</span></span>
+                  </button>
+                ))}
+              </div>
             ))}
-            {!list.length && <div className="item-empty">Aucune recette.</div>}
+            {!count && <div className="item-empty">Aucune recette{filter.cat || filter.format || search ? ' pour ce filtre' : ''}.</div>}
           </div>
         </div>
         <div className="recipe-editor">
@@ -63,6 +76,7 @@ export default function Recipes() {
           ) : <Empty>Choisissez une recette dans la liste, ou créez-en une nouvelle.</Empty>}
         </div>
       </div>
+      {managing && <CategoryManager categories={cat.data.categories} onClose={() => setManaging(false)} reload={cat.reload} />}
     </>
   )
 }
@@ -70,9 +84,8 @@ export default function Recipes() {
 function RecipeEditor({ recipe, cat, onBack, onSaved, onArchived, reloadCat }) {
   const isNew = !recipe
   const [form, setForm] = useState(() => recipe
-    ? { ...recipe, yield_qty: String(recipe.yield_qty), sale_price: String(recipe.sale_price), servings: recipe.servings || null }
-    : { name: '', category: 'Pain', yield_qty: '10', sale_price: '', extra_allergens: [], traces: [], instructions: '', active: true, servings: null })
-  const [customSize, setCustomSize] = useState('')
+    ? { ...recipe, yield_qty: String(recipe.yield_qty), sale_price: String(recipe.sale_price), servings: recipe.servings || null, format: fmtOf(recipe), bac_size: recipe.bac_size || null }
+    : { name: '', category: cat.categories?.[0]?.name || 'Pain', yield_qty: '10', sale_price: '', extra_allergens: [], traces: [], instructions: '', active: true, servings: null, format: null, bac_size: null })
   const [lines, setLines] = useState(() => (recipe ? cat.itemsByRecipe[recipe.id] || [] : []).map(i => ({ article_id: i.article_id, quantity: String(i.quantity) })))
   const [extraArticles, setExtraArticles] = useState([])
   const [dirty, setDirty] = useState(isNew)
@@ -87,7 +100,8 @@ function RecipeEditor({ recipe, cat, onBack, onSaved, onArchived, reloadCat }) {
   const setLine = (i, patch) => { setLines(ls => ls.map((l, j) => (j === i ? { ...l, ...patch } : l))); setDirty(true) }
 
   const yieldQty = toNumber(form.yield_qty) || 1
-  const siblings = cat.recipes.filter(x => x.id !== recipe?.id && x.active && x.servings && x.name.trim().toLowerCase() === form.name.trim().toLowerCase()).map(x => x.servings)
+  const siblings = cat.recipes.filter(x => x.id !== recipe?.id && x.active && x.name.trim().toLowerCase() === form.name.trim().toLowerCase()).map(formatLabel)
+  const word = unitWord(form)
   const salePrice = toNumber(form.sale_price)
   const batchCost = lines.reduce((s, l) => s + lineCost(toNumber(l.quantity), articlesById[l.article_id]), 0)
   const unitCost = batchCost / yieldQty
@@ -110,28 +124,40 @@ function RecipeEditor({ recipe, cat, onBack, onSaved, onArchived, reloadCat }) {
     else set({ traces: form.traces.filter(k => k !== key) })
   }
 
-  // Changer la taille : propose de recalculer les quantités proportionnellement
-  function changeSize(n) {
-    const from = form.servings, hasQty = lines.some(l => toNumber(l.quantity) > 0)
-    if (from && n && from !== n && hasQty && confirm(`Recalculer les quantités et le prix pour ${n} personnes (au lieu de ${from}) ?`)) {
-      const f = n / from
+  // Changer de format : propose de recalculer les quantités si on reste dans la même famille (personnes ou bacs)
+  function changeFormat(next) {
+    const a = sizeUnits(form), b = sizeUnits(next)
+    const hasQty = lines.some(l => toNumber(l.quantity) > 0)
+    if (a.family && a.family === b.family && a.units && b.units && a.units !== b.units && hasQty
+      && confirm(`Recalculer les quantités et le prix pour « ${formatLabel(next)} » (au lieu de « ${formatLabel(form)} ») ?`)) {
+      const f = b.units / a.units
       setLines(ls => ls.map(l => ({ ...l, quantity: String(Math.round(toNumber(l.quantity) * f * 10) / 10) })))
-      if (toNumber(form.sale_price)) { set({ servings: n, sale_price: String(Math.round(toNumber(form.sale_price) * f * 2) / 2) }); return }
+      if (toNumber(form.sale_price)) { set({ ...next, sale_price: String(Math.round(toNumber(form.sale_price) * f * 2) / 2) }); return }
     }
-    set({ servings: n })
+    set(next)
   }
 
-  // Créer une autre taille du même gâteau, quantités et prix recalculés
-  async function createSize(n) {
-    const f = n / form.servings
+  // Autres tailles possibles pour ce produit (même famille)
+  const otherSizes = (() => {
+    const fam = sizeUnits(form).family
+    const opts = fam === 'pers'
+      ? [{ format: 'gateau', servings: 4 }, { format: 'gateau', servings: 6 }, { format: 'gateau', servings: 8 }, { format: 'cadre', servings: 60 }]
+      : fam === 'bac' ? [{ format: 'bac', bac_size: 'demi' }, { format: 'bac', bac_size: 'entier' }] : []
+    return opts.map(o => ({ servings: null, bac_size: null, ...o }))
+      .filter(o => formatLabel(o) !== formatLabel(form) && !siblings.includes(formatLabel(o)))
+  })()
+
+  // Créer la même recette dans une autre taille, quantités et prix recalculés
+  async function createSize(next) {
+    const f = sizeUnits(next).units / sizeUnits(form).units
     try {
       const id = await q(supabase.rpc('save_recipe', {
         p_id: null,
-        p_recipe: { ...form, servings: n, yield_qty: yieldQty, sale_price: Math.round(salePrice * f * 2) / 2 },
+        p_recipe: { ...form, ...next, yield_qty: yieldQty, sale_price: Math.round(salePrice * f * 2) / 2 },
         p_items: lines.filter(l => l.article_id && toNumber(l.quantity) > 0)
           .map(l => ({ article_id: l.article_id, quantity: Math.round(toNumber(l.quantity) * f * 10) / 10 })),
       }))
-      notify(`${form.name} — ${n} pers. créé (quantités recalculées)`)
+      notify(`${form.name} — ${formatLabel(next)} créé (quantités recalculées)`)
       onSaved(id)
     } catch (e) { notify(e.message, 'error') }
   }
@@ -179,33 +205,22 @@ function RecipeEditor({ recipe, cat, onBack, onSaved, onArchived, reloadCat }) {
         <div className="grid-2">
           <Field label="Nom"><input value={form.name} onChange={e => set({ name: e.target.value })} placeholder="Ex. : Cramique aux raisins" /></Field>
           <Field label="Catégorie">
-            <input list="recipe-cats" value={form.category || ''} onChange={e => set({ category: e.target.value })} />
-            <datalist id="recipe-cats">{CATEGORIES.map(c => <option key={c} value={c} />)}</datalist>
+            <CategorySelect value={form.category} onChange={v => set({ category: v })} categories={cat.categories || []} />
           </Field>
         </div>
         <div className="grid-2">
-          <Field label={form.servings ? 'Gâteaux par fournée' : 'Rendement (pièces par fournée)'}><input inputMode="decimal" value={form.yield_qty} onChange={e => set({ yield_qty: e.target.value })} /></Field>
-          <Field label={form.servings ? `Prix de vente TTC du gâteau ${form.servings} pers. (€)` : 'Prix de vente TTC par pièce (€)'}><input inputMode="decimal" value={form.sale_price} onChange={e => set({ sale_price: e.target.value })} /></Field>
+          <Field label={word === 'pièce' ? 'Rendement (pièces par fournée)' : `Nombre de ${word}s par fournée`}><input inputMode="decimal" value={form.yield_qty} onChange={e => set({ yield_qty: e.target.value })} /></Field>
+          <Field label={word === 'pièce' ? 'Prix de vente TTC par pièce (€)' : `Prix de vente TTC — ${formatLabel(form)} (€)`}><input inputMode="decimal" value={form.sale_price} onChange={e => set({ sale_price: e.target.value })} /></Field>
         </div>
         <div className="field">
-          <span>Taille</span>
-          <div className="chips" role="radiogroup" aria-label="Taille">
-            <button type="button" role="radio" aria-checked={!form.servings} className={'chip-toggle size' + (!form.servings ? ' sel' : '')} onClick={() => changeSize(null)}>À la pièce</button>
-            {[4, 6, 8].map(n => (
-              <button type="button" key={n} role="radio" aria-checked={form.servings === n} className={'chip-toggle size' + (form.servings === n ? ' sel' : '')} onClick={() => changeSize(n)}>Gâteau {n} pers.</button>
-            ))}
-            <span className="row" style={{ gap: 6, flexWrap: 'nowrap' }}>
-              <input inputMode="numeric" placeholder="Autre" value={customSize} onChange={e => setCustomSize(e.target.value.replace(/\D/g, ''))} style={{ width: 84 }} aria-label="Autre nombre de personnes" />
-              <button type="button" className="small" disabled={!Number(customSize)} onClick={() => { changeSize(Number(customSize)); setCustomSize('') }}>pers.</button>
-            </span>
-          </div>
-          {form.servings && ![4, 6, 8].includes(form.servings) && <small>Gâteau pour {form.servings} personnes.</small>}
+          <span>Format</span>
+          <FormatPicker value={form} onChange={changeFormat} />
         </div>
       </div>
 
       <div className="panel">
         <div className="panel-head">
-          <h2>{form.servings ? `Ingrédients — gâteau ${form.servings} pers.` : 'Ingrédients pour une fournée'}</h2>
+          <h2>{formatLabel(form) ? `Ingrédients — ${formatLabel(form)}` : 'Ingrédients pour une fournée'}</h2>
           {totalWeight > 0 && <span className="muted small-text">≈ {num(totalWeight / 1000, 3)} kg · {num(totalWeight / yieldQty, 0)} g / pièce</span>}
         </div>
         <div>
@@ -235,20 +250,20 @@ function RecipeEditor({ recipe, cat, onBack, onSaved, onArchived, reloadCat }) {
         </div>
       </div>
 
-      {!isNew && !dirty && form.servings && (
+      {!isNew && !dirty && sizeUnits(form).family && (
         <div className="panel row">
-          <span style={{ flex: '1 1 220px' }}><b>Autres tailles</b><br /><span className="muted small-text">Crée une nouvelle recette avec les quantités et le prix recalculés.</span></span>
-          {[4, 6, 8].filter(n => n !== form.servings && !siblings.includes(n)).map(n => (
-            <button key={n} onClick={() => createSize(n)}><Icon name="plus" size={18} />{n} pers.</button>
+          <span style={{ flex: '1 1 220px' }}><b>Autres tailles</b><br /><span className="muted small-text">Crée la même recette dans une autre taille, quantités et prix recalculés.</span></span>
+          {otherSizes.map(o => (
+            <button key={formatLabel(o)} onClick={() => createSize(o)}><Icon name="plus" size={18} />{formatLabel(o)}</button>
           ))}
-          {[4, 6, 8].filter(n => n !== form.servings && !siblings.includes(n)).length === 0 && <span className="ok small-text">Les tailles 4, 6 et 8 existent déjà.</span>}
+          {!otherSizes.length && <span className="ok small-text">Toutes les tailles existent déjà.</span>}
         </div>
       )}
 
       <div className="totals">
         <div><span>Coût d’une fournée</span><b>{eur(batchCost)}</b></div>
-        <div><span>{form.servings ? 'Coût par gâteau' : 'Coût par pièce'}</span><b>{eur(unitCost)}</b></div>
-        <div><span>{form.servings ? 'Marge par gâteau' : 'Marge par pièce'}</span><b className={salePrice ? (margin < 0 ? 'neg' : 'pos') : ''}>{salePrice ? eur(margin) : '—'}</b></div>
+        <div><span>Coût par {word}</span><b>{eur(unitCost)}</b></div>
+        <div><span>Marge par {word}</span><b className={salePrice ? (margin < 0 ? 'neg' : 'pos') : ''}>{salePrice ? eur(margin) : '—'}</b></div>
         <div><span>Taux de marge</span><b className={salePrice ? (marginPct < 0 ? 'neg' : 'pos') : ''}>{salePrice ? `${num(marginPct, 1)} %` : '—'}</b></div>
       </div>
 

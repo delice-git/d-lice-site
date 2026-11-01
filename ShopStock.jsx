@@ -1,7 +1,8 @@
 import { useMemo, useState } from 'react'
 import { supabase } from './supabase'
 import { q, useData } from './useData'
-import { loadCatalogue, allergensOf, productName } from './catalogue'
+import { loadCatalogue, allergensOf, productName, groupByCategory, fmtOf } from './catalogue'
+import { CategoryBar, useCatFilter } from './categories'
 import { addDaysISO, fmtDateTime, num, todayISO, toNumber } from './format'
 import { AllergenBadges } from './AllergenBadges'
 import { Empty, ErrorBox, Field, Loading, Modal, NumberCell, PageHeader, QtyCell, SearchBox, Seg, StockMoveModal } from './ui'
@@ -85,6 +86,7 @@ function Products({ shopId, cat }) {
   const [search, setSearch] = useState('')
   const [move, setMove] = useState(null)
   const [restockOpen, setRestockOpen] = useState(false)
+  const filter = useCatFilter('stock-magasin')
 
   const stock = useData(async () => {
     const [rows, orders] = await Promise.all([
@@ -100,13 +102,16 @@ function Products({ shopId, cat }) {
   const lines = useMemo(() => {
     if (!stock.data) return []
     const s = search.trim().toLowerCase()
-    return cat.recipes.filter(r => r.active && (!s || r.name.toLowerCase().includes(s))).map(r => {
+    return cat.recipes.filter(r => r.active && (!s || productName(r).toLowerCase().includes(s))).map(r => {
       const row = stock.data.rows[r.id]
       const qty = Number(row?.qty || 0), target = Number(row?.target_qty || 0), pending = stock.data.pending[r.id] || 0
       return { r, qty, target, pending, missing: Math.max(0, target - qty), toOrder: Math.max(0, Math.ceil(target - qty - pending)), alg: allergensOf(r, cat) }
     })
   }, [stock.data, cat, search])
   const below = lines.filter(l => l.toOrder > 0)
+  const allGroups = useMemo(() => groupByCategory(lines.filter(l => !filter.format || (fmtOf(l.r) || 'piece') === filter.format), l => l.r.category, cat.categories), [lines, filter.format, cat.categories])
+  const shownLines = allGroups.filter(g => !filter.cat || g.name === filter.cat).flatMap(g => g.items)
+  const formats = [...new Set(lines.map(l => fmtOf(l.r) || 'piece'))]
 
   function setLocal(recipeId, patch) {
     stock.setData(d => ({ ...d, rows: { ...d.rows, [recipeId]: { ...(d.rows[recipeId] || { qty: 0, target_qty: 0 }), ...patch } } }))
@@ -134,8 +139,9 @@ function Products({ shopId, cat }) {
         <SearchBox value={search} onChange={setSearch} placeholder="Rechercher un produit…" />
         {below.length > 0 && <button className="accent" onClick={() => setRestockOpen(true)}>Commander ce qui manque ({below.length})</button>}
       </div>
+      <CategoryBar groups={allGroups} value={filter.cat} onChange={filter.setCat} formats={formats} format={filter.format} onFormat={filter.setFormat} />
 
-      {!lines.length ? <Empty>Aucun produit. La production doit d’abord en créer.</Empty> : (
+      {!shownLines.length ? <Empty>{lines.length ? 'Aucun produit pour ce filtre.' : 'Aucun produit. La production doit d’abord en créer.'}</Empty> : (
         <div className="table-wrap stock">
           <table className="stock-table">
             <thead>
@@ -148,9 +154,9 @@ function Products({ shopId, cat }) {
               </tr>
             </thead>
             <tbody>
-              {lines.flatMap(l => {
+              {shownLines.flatMap(l => {
                 const out = []
-                if (l.r.category !== lastCat) { lastCat = l.r.category; out.push(<tr key={'g' + l.r.id} className="grp"><td colSpan={5}>{l.r.category || 'Sans catégorie'}</td></tr>) }
+                if ((l.r.category || '') !== lastCat) { lastCat = l.r.category || ''; out.push(<tr key={'g' + l.r.id} className="grp"><td colSpan={5}>{l.r.category || 'Sans catégorie'}</td></tr>) }
                 const state = l.target > 0 && l.qty <= 0 ? 'out' : l.qty < l.target ? 'low' : ''
                 out.push(
                   <tr key={l.r.id} className={state}>
