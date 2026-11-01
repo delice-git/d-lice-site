@@ -1,0 +1,126 @@
+import { Fragment, useMemo, useState } from 'react'
+import { useData } from './useData'
+import { loadCatalogue, allergensOf, productName, groupByCategory, fmtOf } from './catalogue'
+import { CategoryBar, CategoryManager, useCatFilter } from './categories'
+import { ALLERGENS } from './allergenList'
+import { AllergenBadges } from './AllergenBadges'
+import { Empty, ErrorBox, Loading, PageHeader, SearchBox } from './ui'
+import { Icon } from './icons'
+
+export default function Allergens({ isStaff }) {
+  const filter = useCatFilter('allergenes')
+  const [managing, setManaging] = useState(false)
+  const cat = useData(loadCatalogue, [])
+  const [search, setSearch] = useState('')
+  const [without, setWithout] = useState([])
+  const [open, setOpen] = useState(null)
+
+  const rows = useMemo(() => {
+    if (!cat.data) return []
+    const s = search.trim().toLowerCase()
+    return cat.data.recipes
+      .filter(r => r.active && (!s || productName(r).toLowerCase().includes(s)))
+      .map(r => ({ r, alg: allergensOf(r, cat.data) }))
+      .filter(({ alg }) => without.every(k => !alg.contains.includes(k) && !alg.traces.includes(k)))
+  }, [cat.data, search, without])
+
+  const allGroups = useMemo(() => groupByCategory(rows.filter(x => !filter.format || (fmtOf(x.r) || 'piece') === filter.format), x => x.r.category, cat.data?.categories), [rows, filter.format, cat.data])
+  const groups = allGroups.filter(g => !filter.cat || g.name === filter.cat)
+  const formats = [...new Set(rows.map(x => fmtOf(x.r) || 'piece'))]
+
+  if (cat.loading && !cat.data) return <Loading />
+  const ingredients = r => (cat.data.itemsByRecipe[r.id] || []).map(it => cat.data.articlesById[it.article_id]?.name).filter(Boolean).join(', ') || 'non renseignés'
+
+  return (
+    <>
+      <PageHeader title="Allergènes" subtitle="Les 14 allergènes à déclaration obligatoire, pour chaque produit.">
+        <button className="only-desktop" onClick={() => window.print()}><Icon name="print" size={20} />Imprimer</button>
+      </PageHeader>
+      <ErrorBox error={cat.error} />
+
+      <div className="panel no-print" style={{ marginBottom: 16 }}>
+        <div className="stack" style={{ gap: 12 }}>
+          <SearchBox value={search} onChange={setSearch} placeholder="Rechercher un produit…" />
+          <div>
+            <p className="small-text muted" style={{ marginBottom: 8 }}>Client allergique ? Touchez ses allergies pour voir ce qu’il peut manger :</p>
+            <div className="chips">
+              {ALLERGENS.map(a => {
+                const on = without.includes(a.key)
+                return (
+                  <button type="button" key={a.key} aria-pressed={on} className={'chip-toggle' + (on ? ' on' : '')}
+                    onClick={() => setWithout(w => on ? w.filter(k => k !== a.key) : [...w, a.key])}>
+                    {on ? 'Sans ' : ''}{a.icon} {a.label}
+                  </button>
+                )
+              })}
+              {without.length > 0 && <button className="small ghost" onClick={() => setWithout([])}>Tout effacer</button>}
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <CategoryBar groups={allGroups} value={filter.cat} onChange={filter.setCat}
+        formats={formats} format={filter.format} onFormat={filter.setFormat} onManage={isStaff ? () => setManaging(true) : null} />
+      {managing && <CategoryManager categories={cat.data.categories} onClose={() => setManaging(false)} reload={cat.reload} />}
+      {!groups.length ? (
+        <Empty>{without.length ? 'Aucun produit ne convient à ces allergies (traces comprises).' : 'Aucune recette active.'}</Empty>
+      ) : (
+        <>
+          {/* Téléphone : une fiche par produit */}
+          <div className="list only-mobile">
+            {groups.map(g => [<div key={'g' + g.name} className="list-group">{g.label}</div>, ...g.items.map(({ r, alg }) => (
+              <div key={r.id} className="item" style={{ alignItems: 'flex-start' }}>
+                <button className="item-main tap" onClick={() => setOpen(open === r.id ? null : r.id)} aria-expanded={open === r.id}>
+                  <span className="item-title">{productName(r)}</span>
+                  <AllergenBadges {...alg} />
+                  {open === r.id && <span className="item-sub" style={{ marginTop: 4 }}>Ingrédients : {ingredients(r)}</span>}
+                </button>
+              </div>
+            ))])}
+          </div>
+
+          {/* Ordinateur : tableau croisé */}
+          <div className="table-wrap only-desktop">
+            <table className="matrix">
+              <thead>
+                <tr>
+                  <th>Produit</th>
+                  {ALLERGENS.map(a => <th key={a.key} className="rot" title={a.label}>{a.icon} {a.label}</th>)}
+                </tr>
+              </thead>
+              <tbody>
+                {groups.map(g => (<Fragment key={'g' + g.name}>
+                  <tr className="grp-row-alg"><td colSpan={ALLERGENS.length + 1}>{g.label}</td></tr>
+                  {g.items.map(({ r, alg }) => (
+                  <Fragment key={r.id}>
+                    <tr className="clickable" onClick={() => setOpen(open === r.id ? null : r.id)} aria-expanded={open === r.id}>
+                      <td><b>{productName(r)}</b></td>
+                      {ALLERGENS.map(a => (
+                        <td key={a.key} className="cell">
+                          {alg.contains.includes(a.key) ? <span className="dot" title={`Contient : ${a.label}`} />
+                            : alg.traces.includes(a.key) ? <span className="dot trace" title={`Traces possibles : ${a.label}`} /> : null}
+                        </td>
+                      ))}
+                    </tr>
+                    {open === r.id && (
+                      <tr><td colSpan={ALLERGENS.length + 1} style={{ background: 'var(--surface-2)' }}>
+                        <div className="stack" style={{ gap: 8 }}>
+                          <AllergenBadges {...alg} />
+                          <p className="small-text"><b>Ingrédients :</b> {ingredients(r)}</p>
+                        </div>
+                      </td></tr>
+                    )}
+                  </Fragment>
+                  ))}
+                </Fragment>))}
+              </tbody>
+            </table>
+          </div>
+          <p className="small-text muted only-desktop" style={{ marginTop: 10 }}>
+            <span className="dot" style={{ width: 12, height: 12 }} /> contient &nbsp;&nbsp; <span className="dot trace" style={{ width: 12, height: 12 }} /> traces possibles
+          </p>
+        </>
+      )}
+    </>
+  )
+}
