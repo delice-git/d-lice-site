@@ -20,6 +20,11 @@ const PATHS = {
   close: <path d="M6 6l12 12M18 6 6 18" />,
   chevron: <path d="M9 5l7 7-7 7" />,
   print: <><path d="M7 9V3.5h10V9" /><rect x="3.5" y="9" width="17" height="8" rx="2" /><path d="M7 14h10v6.5H7z" /></>,
+  edit: <><path d="M4 20h4L19 9a2.8 2.8 0 0 0-4-4L4 16z" /><path d="M13.5 6.5l4 4" /></>,
+  checklist: <><rect x="3.5" y="4" width="5" height="5" rx="1" /><path d="M4.5 6.5l1.2 1.2 2-2.2" /><rect x="3.5" y="14" width="5" height="5" rx="1" /><path d="M12 6.5h8.5M12 16.5h8.5" /></>,
+  pin: <><path d="M9 4h6l-1 5 3 3H7l3-3z" /><path d="M12 12v8" /></>,
+  trash: <><path d="M4 7h16" /><path d="M9 7V4.5h6V7" /><path d="M6 7l1 13h10l1-13" /><path d="M10 11v6M14 11v6" /></>,
+  notes: <><path d="M6 3.5h12a1.5 1.5 0 0 1 1.5 1.5v14A1.5 1.5 0 0 1 18 20.5H6A1.5 1.5 0 0 1 4.5 19V5A1.5 1.5 0 0 1 6 3.5z" /><path d="M8 8h8M8 12h8M8 16h5" /></>,
   clipboard: <><rect x="5" y="4" width="14" height="17" rx="2" /><path d="M9 4V2.8h6V4" /><path d="M8.5 13l2.5 2.5 4.5-5" /></>,
 }
 
