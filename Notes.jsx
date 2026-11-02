@@ -41,7 +41,7 @@ export default function Notes() {
       data.setData(list => [rows[0], ...(list || [])])
       setSelected(rows[0].id); setSearch('')
     } catch (e) {
-      notify(/relation .*notes/i.test(e.message) ? 'Lancez d’abord la mise à jour SQL « notes » dans Supabase.' : e.message, 'error')
+      notify('Impossible de créer la note : ' + e.message, 'error')
     }
   }
 
@@ -81,7 +81,9 @@ export default function Notes() {
           <Icon name="search" size={18} />
           <input type="search" value={search} onChange={e => setSearch(e.target.value)} placeholder="Rechercher" aria-label="Rechercher dans les notes" />
         </div>
-        <ErrorBox error={data.error && (/notes/.test(data.error) ? 'Lancez d’abord la mise à jour SQL « notes » dans Supabase.' : data.error)} />
+        <ErrorBox error={data.error && (/(does not exist|schema cache|Could not find)/i.test(data.error)
+          ? `La table « notes » est introuvable dans le projet Supabase du site (${(import.meta.env.VITE_SUPABASE_URL || '').replace('https://', '') || 'sbxcdvmaefkvdogcoldw.supabase.co'}). Lancez notes.sql dans CE projet. Détail : ${data.error}`
+          : data.error)} />
         <div className="notes-scroll">
           {pinned.length > 0 && <><p className="notes-group">Épinglées</p><div className="notes-card">{pinned.map(Item)}</div></>}
           {others.length > 0 && <>{pinned.length > 0 && <p className="notes-group">Notes</p>}<div className="notes-card">{others.map(Item)}</div></>}
