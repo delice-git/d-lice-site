@@ -793,3 +793,32 @@ td.f-com .ro-v { color: var(--blue); }
 }
 .notes-list, .notes-editor { min-width: 0; }
 @media (max-width: 860px) { .notes-app { grid-template-columns: minmax(0, 1fr); } }
+
+/* =====================================================================
+   Historique des modifications
+   ===================================================================== */
+.hist { display: flex; flex-direction: column; gap: 10px; }
+.hist-card { background: var(--surface); border: 1px solid var(--line); border-radius: var(--r-m); padding: 12px 14px; box-shadow: inset 4px 0 0 var(--line-strong); }
+.hist-card.is-undo { box-shadow: inset 4px 0 0 var(--warn); }
+.hist-card.undone { opacity: .62; }
+.hist-card.undone .hist-rows { text-decoration: line-through; text-decoration-color: color-mix(in srgb, var(--ink) 40%, transparent); }
+.hist-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 8px; }
+.hist-head time { font-family: var(--font-title); font-weight: 750; font-size: 1.1rem; font-variant-numeric: tabular-nums; }
+.hist-zones { display: inline-flex; gap: 4px; flex-wrap: wrap; }
+.hist-rows { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.hist-rows li { display: flex; gap: 10px; align-items: flex-start; }
+.hist-act { flex: none; width: 24px; height: 24px; border-radius: 50%; display: grid; place-items: center; font-weight: 800; font-size: .9rem; margin-top: 1px; }
+.hist-act.a-INSERT { background: var(--green-soft); color: var(--green-ink); }
+.hist-act.a-UPDATE { background: var(--blue-soft); color: var(--blue-ink); }
+.hist-act.a-DELETE { background: var(--red-soft); color: var(--red-ink); }
+.hist-body { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.hist-title { font-weight: 700; overflow-wrap: anywhere; }
+.hist-changes { display: flex; flex-wrap: wrap; gap: 4px 8px; }
+.chg { font-size: .88rem; background: var(--surface-2); border: 1px solid var(--line); border-radius: 6px; padding: 1px 8px; font-variant-numeric: tabular-nums; }
+.chg s { color: var(--red); text-decoration-thickness: 1.5px; }
+.chg b { color: var(--green-ink); }
+@media (max-width: 860px) {
+  .hist-card { padding: 12px; }
+  .hist-head .spacer { display: none; }
+  .hist-head button { margin-left: auto; }
+}

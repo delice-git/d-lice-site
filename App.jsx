@@ -17,6 +17,7 @@ import Allergens from './Allergens'
 import Users from './Users'
 import Feuille from './Feuille'
 import Notes from './Notes'
+import Historique from './Historique'
 import logo from './logo.png'
 
 // [clé, libellé, libellé court, icône, page, dans la barre du bas sur téléphone]
@@ -27,6 +28,7 @@ const STAFF_TABS = [
   ['recipes', 'Recettes', 'Recettes', 'book', Recipes, true],
   ['agenda', 'Agenda', 'Agenda', 'calendar', Agenda, false],
   ['notes', 'Notes', 'Notes', 'notes', Notes, false],
+  ['history', 'Historique', 'Historique', 'history', Historique, false],
   ['products', 'Stock produits', 'Produits', 'bread', ProductStock, false],
   ['articles', 'Stock matières', 'Matières', 'box', Articles, false],
   ['shops', 'Stocks magasins', 'Magasins', 'store', ShopStock, false],
